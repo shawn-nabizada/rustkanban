@@ -21,3 +21,21 @@ chrono = "0.4"
 clap = { version = "4.5", features = ["derive"] }
 dirs = "6.0"
 unicode-width = "0.2"
+
+# Config for 'dist'
+[workspace.metadata.dist]
+cargo-dist-version = "0.31.0"
+ci = "github"
+installers = ["shell"]
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+]
+install-path = "CARGO_HOME"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
