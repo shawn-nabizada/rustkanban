@@ -2,6 +2,7 @@ use std::fmt;
 
 use chrono::NaiveDate;
 use chrono::NaiveDateTime;
+use ratatui::style::Color;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Priority {
@@ -16,6 +17,14 @@ impl Priority {
             Priority::Low => "Low",
             Priority::Medium => "Medium",
             Priority::High => "High",
+        }
+    }
+
+    pub fn color(&self) -> Color {
+        match self {
+            Priority::High => Color::Red,
+            Priority::Medium => Color::Yellow,
+            Priority::Low => Color::Green,
         }
     }
 

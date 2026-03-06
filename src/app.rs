@@ -815,11 +815,12 @@ impl App {
         };
         let w = self.modal.wrap_width.max(1);
         let pos = self.modal.cursor_pos.min(text.len());
-        let (row, col) = byte_to_row_col(text, pos, w);
+        let rows = visual_rows(text, w);
+        let (row, col) = byte_to_row_col_with(&rows, pos);
         if row == 0 {
             return;
         }
-        self.modal.cursor_pos = row_col_to_byte(text, row - 1, col, w);
+        self.modal.cursor_pos = row_col_to_byte_with(&rows, row - 1, col, text.len());
     }
 
     pub fn modal_cursor_down(&mut self) {
@@ -830,12 +831,12 @@ impl App {
         };
         let w = self.modal.wrap_width.max(1);
         let pos = self.modal.cursor_pos.min(text.len());
-        let (row, col) = byte_to_row_col(text, pos, w);
-        let total = total_visual_rows(text, w);
-        if row + 1 >= total {
+        let rows = visual_rows(text, w);
+        let (row, col) = byte_to_row_col_with(&rows, pos);
+        if row + 1 >= rows.len() {
             return;
         }
-        self.modal.cursor_pos = row_col_to_byte(text, row + 1, col, w);
+        self.modal.cursor_pos = row_col_to_byte_with(&rows, row + 1, col, text.len());
     }
 
     // Help toggle (Phase 11)
@@ -971,7 +972,6 @@ impl App {
         }
         self.tag_editing = false;
         self.reload_tags();
-        self.reload_tasks();
         if self.tag_cursor >= self.tags.len() && !self.tags.is_empty() {
             self.tag_cursor = self.tags.len() - 1;
         }
@@ -1081,13 +1081,7 @@ fn visual_rows(text: &str, wrap_width: usize) -> Vec<(usize, usize)> {
     rows
 }
 
-fn total_visual_rows(text: &str, wrap_width: usize) -> usize {
-    visual_rows(text, wrap_width).len()
-}
-
-/// Convert a byte offset to (visual_row, column) given a wrap width.
-fn byte_to_row_col(text: &str, byte_pos: usize, wrap_width: usize) -> (usize, usize) {
-    let rows = visual_rows(text, wrap_width);
+fn byte_to_row_col_with(rows: &[(usize, usize)], byte_pos: usize) -> (usize, usize) {
     for (i, &(start, len)) in rows.iter().enumerate() {
         let end = start + len;
         // Cursor can be at end of row (after last char) only if it's the last row
@@ -1136,13 +1130,11 @@ fn wrapped_line_count(text: &str, width: usize) -> usize {
     count
 }
 
-/// Convert (visual_row, column) to a byte offset, clamping column to row length.
-fn row_col_to_byte(text: &str, row: usize, col: usize, wrap_width: usize) -> usize {
-    let rows = visual_rows(text, wrap_width);
+fn row_col_to_byte_with(rows: &[(usize, usize)], row: usize, col: usize, text_len: usize) -> usize {
     if let Some(&(start, len)) = rows.get(row) {
         let clamped_col = col.min(len);
-        (start + clamped_col).min(text.len())
+        (start + clamped_col).min(text_len)
     } else {
-        text.len()
+        text_len
     }
 }

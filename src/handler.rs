@@ -71,14 +71,6 @@ fn handle_modal(app: &mut App, key: KeyEvent) {
                 app.save_modal();
                 return;
             }
-            KeyCode::Char('t') => {
-                // Toggle tag under cursor (cycle through tags with Ctrl+T)
-                if !app.tags.is_empty() {
-                    // Find first un-toggled tag or toggle first
-                    // Simple: cycle through tags, toggling the next one
-                }
-                return;
-            }
             _ => {}
         }
     }
@@ -135,11 +127,7 @@ fn handle_sort_menu(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Enter => {
             match app.sort_menu_index {
-                0 => app.sort_menu_select(), // Due Date
-                1 => {
-                    app.sort_menu_index = 1;
-                    app.sort_menu_select();
-                } // Priority
+                0 | 1 => app.sort_menu_select(),
                 i if tag_count > 0 && i >= 3 && i < 3 + tag_count => {
                     let tag_idx = i - 3;
                     if let Some(tag) = app.tags.get(tag_idx) {

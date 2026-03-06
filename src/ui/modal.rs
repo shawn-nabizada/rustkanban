@@ -8,7 +8,7 @@ use crate::app::{App, AppMode, ModalField};
 
 pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
-    let modal_area = centered_rect(60, 70, area);
+    let modal_area = super::centered_rect(60, 70, area);
 
     frame.render_widget(Clear, modal_area);
 
@@ -103,11 +103,7 @@ fn render_priority_field(frame: &mut Frame, app: &App, area: Rect) {
     let focused = app.modal.focused_field == ModalField::Priority;
     let border_color = if focused { Color::Yellow } else { Color::Gray };
 
-    let priority_color = match app.modal.priority {
-        crate::model::Priority::High => Color::Red,
-        crate::model::Priority::Medium => Color::Yellow,
-        crate::model::Priority::Low => Color::Green,
-    };
+    let priority_color = app.modal.priority.color();
 
     let block = Block::default()
         .title("Priority (Space to cycle)")
@@ -244,20 +240,4 @@ fn cursor_scroll(text: &str, cursor_byte: usize, width: usize, visible_height: u
 
     // Scroll so cursor line is within the visible area
     cursor_line.saturating_sub(visible_height.saturating_sub(1))
-}
-
-fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
-    let vertical = Layout::vertical([
-        Constraint::Percentage((100 - percent_y) / 2),
-        Constraint::Percentage(percent_y),
-        Constraint::Percentage((100 - percent_y) / 2),
-    ])
-    .split(area);
-
-    Layout::horizontal([
-        Constraint::Percentage((100 - percent_x) / 2),
-        Constraint::Percentage(percent_x),
-        Constraint::Percentage((100 - percent_x) / 2),
-    ])
-    .split(vertical[1])[1]
 }

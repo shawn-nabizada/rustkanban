@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use crate::model::{Column, Priority};
 
 #[derive(Debug, Clone)]
@@ -27,26 +29,26 @@ pub enum UndoAction {
 }
 
 pub struct UndoStack {
-    stack: Vec<UndoAction>,
+    stack: VecDeque<UndoAction>,
     max_size: usize,
 }
 
 impl UndoStack {
     pub fn new() -> Self {
         UndoStack {
-            stack: Vec::new(),
+            stack: VecDeque::new(),
             max_size: 20,
         }
     }
 
     pub fn push(&mut self, action: UndoAction) {
         if self.stack.len() >= self.max_size {
-            self.stack.remove(0);
+            self.stack.pop_front();
         }
-        self.stack.push(action);
+        self.stack.push_back(action);
     }
 
     pub fn pop(&mut self) -> Option<UndoAction> {
-        self.stack.pop()
+        self.stack.pop_back()
     }
 }

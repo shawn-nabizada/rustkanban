@@ -77,19 +77,26 @@ pub fn load_tasks(conn: &Connection) -> SqliteResult<Vec<Task>> {
         })?
         .collect::<SqliteResult<Vec<_>>>()?;
 
-    // Load tags for each task
+    // Load all task tags in a single query
     let mut tag_stmt = conn.prepare(
-        "SELECT t.name FROM tags t
+        "SELECT tt.task_id, t.name FROM tags t
          JOIN task_tags tt ON t.id = tt.tag_id
-         WHERE tt.task_id = ?1
          ORDER BY t.name",
     )?;
 
+    let mut tag_map: std::collections::HashMap<i64, Vec<String>> = std::collections::HashMap::new();
+    tag_stmt.query_map([], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+    })?.for_each(|r| {
+        if let Ok((task_id, tag_name)) = r {
+            tag_map.entry(task_id).or_default().push(tag_name);
+        }
+    });
+
     for task in &mut tasks {
-        let tag_names: Vec<String> = tag_stmt
-            .query_map(rusqlite::params![task.id], |row| row.get(0))?
-            .collect::<SqliteResult<Vec<_>>>()?;
-        task.tags = tag_names;
+        if let Some(tags) = tag_map.remove(&task.id) {
+            task.tags = tags;
+        }
     }
 
     Ok(tasks)
@@ -106,6 +113,13 @@ pub fn load_tags(conn: &Connection) -> SqliteResult<Vec<Tag>> {
         })?
         .collect::<SqliteResult<Vec<_>>>()?;
     Ok(tags)
+}
+
+fn now_timestamp() -> String {
+    chrono::Local::now()
+        .naive_local()
+        .format("%Y-%m-%dT%H:%M:%S")
+        .to_string()
 }
 
 pub fn insert_tag(conn: &Connection, name: &str) -> SqliteResult<i64> {
@@ -161,7 +175,7 @@ pub fn insert_task(
     column: Column,
     due_date: Option<chrono::NaiveDate>,
 ) -> SqliteResult<i64> {
-    let now = chrono::Local::now().naive_local().format("%Y-%m-%dT%H:%M:%S").to_string();
+    let now = now_timestamp();
     let due_date_str = due_date.map(|d| d.format("%Y-%m-%d").to_string());
 
     conn.execute(
@@ -182,7 +196,7 @@ pub fn insert_task(
 }
 
 pub fn update_task_column(conn: &Connection, task_id: i64, column: Column) -> SqliteResult<()> {
-    let now = chrono::Local::now().naive_local().format("%Y-%m-%dT%H:%M:%S").to_string();
+    let now = now_timestamp();
     conn.execute(
         "UPDATE tasks SET column_name = ?1, updated_at = ?2 WHERE id = ?3",
         rusqlite::params![column.as_str(), now, task_id],
@@ -191,7 +205,7 @@ pub fn update_task_column(conn: &Connection, task_id: i64, column: Column) -> Sq
 }
 
 pub fn update_task_priority(conn: &Connection, task_id: i64, priority: Priority) -> SqliteResult<()> {
-    let now = chrono::Local::now().naive_local().format("%Y-%m-%dT%H:%M:%S").to_string();
+    let now = now_timestamp();
     conn.execute(
         "UPDATE tasks SET priority = ?1, updated_at = ?2 WHERE id = ?3",
         rusqlite::params![priority.as_str(), now, task_id],
@@ -207,7 +221,7 @@ pub fn update_task(
     priority: Priority,
     due_date: Option<chrono::NaiveDate>,
 ) -> SqliteResult<()> {
-    let now = chrono::Local::now().naive_local().format("%Y-%m-%dT%H:%M:%S").to_string();
+    let now = now_timestamp();
     let due_date_str = due_date.map(|d| d.format("%Y-%m-%d").to_string());
     conn.execute(
         "UPDATE tasks SET title = ?1, description = ?2, priority = ?3, due_date = ?4, updated_at = ?5 WHERE id = ?6",

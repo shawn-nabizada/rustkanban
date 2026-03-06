@@ -1,5 +1,5 @@
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
@@ -18,7 +18,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     };
 
     let area = frame.area();
-    let modal_area = centered_rect(70, 80, area);
+    let modal_area = super::centered_rect(70, 80, area);
     frame.render_widget(Clear, modal_area);
 
     let block = Block::default()
@@ -49,11 +49,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     frame.render_widget(Paragraph::new(title_line), chunks[0]);
 
     // Priority + Column
-    let priority_color = match task.priority {
-        crate::model::Priority::High => Color::Red,
-        crate::model::Priority::Medium => Color::Yellow,
-        crate::model::Priority::Low => Color::Green,
-    };
+    let priority_color = task.priority.color();
     let info_line = Line::from(vec![
         Span::styled("Priority: ", Style::default().fg(Color::Gray)),
         Span::styled(
@@ -122,20 +118,4 @@ pub fn render(frame: &mut Frame, app: &App) {
         Span::raw(": close"),
     ]);
     frame.render_widget(Paragraph::new(help), chunks[5]);
-}
-
-fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
-    let vertical = Layout::vertical([
-        Constraint::Percentage((100 - percent_y) / 2),
-        Constraint::Percentage(percent_y),
-        Constraint::Percentage((100 - percent_y) / 2),
-    ])
-    .split(area);
-
-    Layout::horizontal([
-        Constraint::Percentage((100 - percent_x) / 2),
-        Constraint::Percentage(percent_x),
-        Constraint::Percentage((100 - percent_x) / 2),
-    ])
-    .split(vertical[1])[1]
 }

@@ -1,5 +1,4 @@
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
@@ -28,7 +27,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     };
 
     let area = frame.area();
-    let popup = centered_rect(40, 15, area);
+    let popup = super::centered_rect(40, 15, area);
     frame.render_widget(Clear, popup);
 
     let block = Block::default()
@@ -57,20 +56,4 @@ pub fn render(frame: &mut Frame, app: &App) {
     ];
 
     frame.render_widget(Paragraph::new(lines), inner);
-}
-
-fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
-    let vertical = Layout::vertical([
-        Constraint::Percentage((100 - percent_y) / 2),
-        Constraint::Percentage(percent_y),
-        Constraint::Percentage((100 - percent_y) / 2),
-    ])
-    .split(area);
-
-    Layout::horizontal([
-        Constraint::Percentage((100 - percent_x) / 2),
-        Constraint::Percentage(percent_x),
-        Constraint::Percentage((100 - percent_x) / 2),
-    ])
-    .split(vertical[1])[1]
 }

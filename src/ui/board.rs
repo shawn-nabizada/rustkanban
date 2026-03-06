@@ -60,11 +60,7 @@ fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect) {
         let is_selected =
             app.mode == AppMode::Selected && app.selected_task_id == Some(task.id);
 
-        let priority_color = match task.priority {
-            crate::model::Priority::High => Color::Red,
-            crate::model::Priority::Medium => Color::Yellow,
-            crate::model::Priority::Low => Color::Green,
-        };
+        let priority_color = task.priority.color();
 
         let show_marker = is_cursor || is_selected;
         let cursor_marker = if show_marker { "> " } else { "  " };
