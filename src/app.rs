@@ -1,0 +1,1148 @@
+use std::time::Instant;
+
+use rusqlite::Connection;
+
+use crate::db;
+use crate::model::{Column, Priority, Tag, Task};
+use crate::undo::{UndoAction, UndoStack};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppMode {
+    Board,
+    Selected,
+    NewTask,
+    EditTask,
+    DetailView,
+    SortMenu,
+    DeleteConfirm,
+    ClearDoneConfirm,
+    TagManagement,
+    SearchFilter,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortMode {
+    DueDate,
+    Priority,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModalField {
+    Title,
+    Description,
+    Priority,
+    Tag,
+    DueDateYear,
+    DueDateMonth,
+    DueDateDay,
+}
+
+impl ModalField {
+    pub fn all() -> &'static [ModalField] {
+        &[
+            ModalField::Title,
+            ModalField::Description,
+            ModalField::Priority,
+            ModalField::Tag,
+            ModalField::DueDateYear,
+            ModalField::DueDateMonth,
+            ModalField::DueDateDay,
+        ]
+    }
+
+    pub fn index(&self) -> usize {
+        match self {
+            ModalField::Title => 0,
+            ModalField::Description => 1,
+            ModalField::Priority => 2,
+            ModalField::Tag => 3,
+            ModalField::DueDateYear => 4,
+            ModalField::DueDateMonth => 5,
+            ModalField::DueDateDay => 6,
+        }
+    }
+
+    pub fn from_index(i: usize) -> ModalField {
+        match i {
+            0 => ModalField::Title,
+            1 => ModalField::Description,
+            2 => ModalField::Priority,
+            3 => ModalField::Tag,
+            4 => ModalField::DueDateYear,
+            5 => ModalField::DueDateMonth,
+            6 => ModalField::DueDateDay,
+            _ => ModalField::Title,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ModalState {
+    pub title: String,
+    pub description: String,
+    pub priority: Priority,
+    pub due_year: String,
+    pub due_month: String,
+    pub due_day: String,
+    pub focused_field: ModalField,
+    pub error: Option<String>,
+    pub editing_task_id: Option<i64>,
+    pub cursor_pos: usize,  // byte offset within the active text field
+    pub wrap_width: usize,  // inner width of the text field (set by renderer)
+}
+
+impl ModalState {
+    pub fn new() -> Self {
+        ModalState {
+            title: String::new(),
+            description: String::new(),
+            priority: Priority::Medium,
+            due_year: String::new(),
+            due_month: String::new(),
+            due_day: String::new(),
+            focused_field: ModalField::Title,
+            error: None,
+            editing_task_id: None,
+            cursor_pos: 0,
+            wrap_width: 80,
+        }
+    }
+
+}
+
+pub struct App {
+    pub mode: AppMode,
+    pub running: bool,
+    pub focused_column: Column,
+    pub cursor_positions: [usize; 3],
+    pub scroll_offsets: [usize; 3],
+    pub tasks: Vec<Task>,
+    pub tags: Vec<Tag>,
+    pub sort_mode: SortMode,
+    pub modal: ModalState,
+    pub selected_task_id: Option<i64>,
+    pub detail_task_id: Option<i64>,
+    pub undo_stack: UndoStack,
+    pub flash_message: Option<String>,
+    pub flash_expire: Option<Instant>,
+    pub sort_menu_index: usize,
+    pub show_help: bool,
+    // Search
+    pub search_query: String,
+    pub search_active: bool,
+    // Tag filter
+    pub filter_tag: Option<i64>,
+    // Tag management
+    pub tag_cursor: usize,
+    pub tag_edit_name: String,
+    pub tag_editing: bool,
+    // Modal tag selection
+    pub modal_tag_ids: Vec<i64>,
+    pub db: Connection,
+}
+
+impl App {
+    pub fn new(db: Connection) -> Self {
+        let tasks = db::load_tasks(&db).unwrap_or_default();
+        let tags = db::load_tags(&db).unwrap_or_default();
+        App {
+            mode: AppMode::Board,
+            running: true,
+            focused_column: Column::Todo,
+            cursor_positions: [0; 3],
+            scroll_offsets: [0; 3],
+            tasks,
+            tags,
+            sort_mode: SortMode::DueDate,
+            modal: ModalState::new(),
+            selected_task_id: None,
+            detail_task_id: None,
+            undo_stack: UndoStack::new(),
+            flash_message: None,
+            flash_expire: None,
+            sort_menu_index: 0,
+            show_help: false,
+            search_query: String::new(),
+            search_active: false,
+            filter_tag: None,
+            tag_cursor: 0,
+            tag_edit_name: String::new(),
+            tag_editing: false,
+            modal_tag_ids: Vec::new(),
+            db,
+        }
+    }
+
+    pub fn tick(&mut self) {
+        if let Some(expire) = self.flash_expire {
+            if Instant::now() >= expire {
+                self.flash_message = None;
+                self.flash_expire = None;
+            }
+        }
+    }
+
+    fn set_flash(&mut self, msg: String) {
+        self.flash_message = Some(msg);
+        self.flash_expire = Some(Instant::now() + std::time::Duration::from_secs(2));
+    }
+
+    pub fn reload_tasks(&mut self) {
+        self.tasks = db::load_tasks(&self.db).unwrap_or_default();
+    }
+
+    pub fn reload_tags(&mut self) {
+        self.tags = db::load_tags(&self.db).unwrap_or_default();
+    }
+
+    pub fn tasks_for_column(&self, col: Column) -> Vec<&Task> {
+        let mut tasks: Vec<&Task> = self.tasks.iter().filter(|t| t.column == col).collect();
+
+        // Apply search filter
+        if self.search_active && !self.search_query.is_empty() {
+            let q = self.search_query.to_lowercase();
+            tasks.retain(|t| {
+                t.title.to_lowercase().contains(&q)
+                    || t.description.to_lowercase().contains(&q)
+            });
+        }
+
+        // Apply tag filter
+        if let Some(tag_id) = self.filter_tag {
+            if let Some(tag) = self.tags.iter().find(|t| t.id == tag_id) {
+                let tag_name = &tag.name;
+                tasks.retain(|t| t.tags.contains(tag_name));
+            }
+        }
+
+        match self.sort_mode {
+            SortMode::DueDate => {
+                tasks.sort_by(|a, b| {
+                    let a_date = a.due_date.unwrap_or(chrono::NaiveDate::MAX);
+                    let b_date = b.due_date.unwrap_or(chrono::NaiveDate::MAX);
+                    a_date.cmp(&b_date)
+                });
+            }
+            SortMode::Priority => {
+                tasks.sort_by(|a, b| {
+                    let priority_order = |p: &Priority| match p {
+                        Priority::High => 0,
+                        Priority::Medium => 1,
+                        Priority::Low => 2,
+                    };
+                    priority_order(&a.priority).cmp(&priority_order(&b.priority))
+                });
+            }
+        }
+
+        tasks
+    }
+
+    pub fn current_task_id(&self) -> Option<i64> {
+        let tasks = self.tasks_for_column(self.focused_column);
+        let cursor = self.cursor_positions[self.focused_column.index()];
+        tasks.get(cursor).map(|t| t.id)
+    }
+
+    fn find_task(&self, id: i64) -> Option<&Task> {
+        self.tasks.iter().find(|t| t.id == id)
+    }
+
+    fn clamp_cursor(&mut self, col: Column) {
+        let count = self.tasks_for_column(col).len();
+        let idx = col.index();
+        if count == 0 {
+            self.cursor_positions[idx] = 0;
+        } else if self.cursor_positions[idx] >= count {
+            self.cursor_positions[idx] = count - 1;
+        }
+    }
+
+    fn set_cursor_to_task(&mut self, task_id: i64, col: Column) {
+        let tasks = self.tasks_for_column(col);
+        if let Some(pos) = tasks.iter().position(|t| t.id == task_id) {
+            self.cursor_positions[col.index()] = pos;
+        }
+    }
+
+    pub fn quit(&mut self) {
+        self.running = false;
+    }
+
+    // Navigation
+
+    pub fn move_column_left(&mut self) {
+        let idx = self.focused_column.index();
+        if idx > 0 {
+            self.focused_column = Column::from_index(idx - 1).unwrap();
+        }
+    }
+
+    pub fn move_column_right(&mut self) {
+        let idx = self.focused_column.index();
+        if idx < 2 {
+            self.focused_column = Column::from_index(idx + 1).unwrap();
+        }
+    }
+
+    pub fn move_cursor_up(&mut self) {
+        let idx = self.focused_column.index();
+        let count = self.tasks_for_column(self.focused_column).len();
+        if count == 0 {
+            return;
+        }
+        if self.cursor_positions[idx] > 0 {
+            self.cursor_positions[idx] -= 1;
+        } else {
+            self.cursor_positions[idx] = count - 1;
+        }
+    }
+
+    pub fn move_cursor_down(&mut self) {
+        let idx = self.focused_column.index();
+        let count = self.tasks_for_column(self.focused_column).len();
+        if count == 0 {
+            return;
+        }
+        if self.cursor_positions[idx] < count - 1 {
+            self.cursor_positions[idx] += 1;
+        } else {
+            self.cursor_positions[idx] = 0;
+        }
+    }
+
+    // Selection (Phase 4)
+
+    pub fn select_task(&mut self) {
+        if let Some(id) = self.current_task_id() {
+            self.selected_task_id = Some(id);
+            self.mode = AppMode::Selected;
+        }
+    }
+
+    pub fn deselect_task(&mut self) {
+        self.selected_task_id = None;
+        self.mode = AppMode::Board;
+    }
+
+    pub fn move_selected_left(&mut self) {
+        if let Some(task_id) = self.selected_task_id {
+            if let Some(task) = self.find_task(task_id) {
+                let from_col = task.column;
+                let col_idx = from_col.index();
+                if col_idx == 0 {
+                    return;
+                }
+                let to_col = Column::from_index(col_idx - 1).unwrap();
+                let _ = db::update_task_column(&self.db, task_id, to_col);
+                self.undo_stack.push(UndoAction::MoveTask {
+                    task_id,
+                    from_column: from_col,
+                });
+                self.reload_tasks();
+                self.clamp_cursor(from_col);
+                self.focused_column = to_col;
+                self.set_cursor_to_task(task_id, to_col);
+            }
+        }
+    }
+
+    pub fn move_selected_right(&mut self) {
+        if let Some(task_id) = self.selected_task_id {
+            if let Some(task) = self.find_task(task_id) {
+                let from_col = task.column;
+                let col_idx = from_col.index();
+                if col_idx >= 2 {
+                    return;
+                }
+                let to_col = Column::from_index(col_idx + 1).unwrap();
+                let _ = db::update_task_column(&self.db, task_id, to_col);
+                self.undo_stack.push(UndoAction::MoveTask {
+                    task_id,
+                    from_column: from_col,
+                });
+                self.reload_tasks();
+                self.clamp_cursor(from_col);
+                self.focused_column = to_col;
+                self.set_cursor_to_task(task_id, to_col);
+            }
+        }
+    }
+
+    // Priority cycling (Phase 5)
+
+    pub fn cycle_priority(&mut self) {
+        if let Some(task_id) = self.current_task_id() {
+            if let Some(task) = self.find_task(task_id) {
+                let old_priority = task.priority;
+                let new_priority = match old_priority {
+                    Priority::Low => Priority::Medium,
+                    Priority::Medium => Priority::High,
+                    Priority::High => Priority::Low,
+                };
+                let _ = db::update_task_priority(&self.db, task_id, new_priority);
+                self.undo_stack.push(UndoAction::PriorityChange {
+                    task_id,
+                    previous: old_priority,
+                });
+                self.reload_tasks();
+                self.set_cursor_to_task(task_id, self.focused_column);
+            }
+        }
+    }
+
+    // Sort menu (Phase 5)
+
+    pub fn open_sort_menu(&mut self) {
+        self.sort_menu_index = match self.sort_mode {
+            SortMode::DueDate => 0,
+            SortMode::Priority => 1,
+        };
+        self.mode = AppMode::SortMenu;
+    }
+
+    pub fn close_sort_menu(&mut self) {
+        self.mode = AppMode::Board;
+    }
+
+    pub fn sort_menu_select(&mut self) {
+        self.sort_mode = match self.sort_menu_index {
+            0 => SortMode::DueDate,
+            1 => SortMode::Priority,
+            _ => SortMode::DueDate,
+        };
+        self.mode = AppMode::Board;
+    }
+
+    // Detail view (Phase 6)
+
+    pub fn open_detail_view(&mut self) {
+        if let Some(id) = self.current_task_id() {
+            self.detail_task_id = Some(id);
+            self.mode = AppMode::DetailView;
+        }
+    }
+
+    pub fn close_detail_view(&mut self) {
+        self.detail_task_id = None;
+        self.mode = AppMode::Board;
+    }
+
+    // Edit modal (Phase 6)
+
+    pub fn open_edit_task_modal(&mut self) {
+        let task_id = match self.mode {
+            AppMode::DetailView => self.detail_task_id,
+            _ => self.current_task_id(),
+        };
+
+        if let Some(id) = task_id {
+            if let Some(task) = self.find_task(id).cloned() {
+                let cursor_pos = task.title.len();
+                let wrap_width = self.modal.wrap_width; // preserve from current render
+                self.modal = ModalState {
+                    title: task.title.clone(),
+                    description: task.description.clone(),
+                    priority: task.priority,
+                    due_year: task.due_date.map(|d| d.format("%Y").to_string()).unwrap_or_default(),
+                    due_month: task.due_date.map(|d| d.format("%-m").to_string()).unwrap_or_default(),
+                    due_day: task.due_date.map(|d| d.format("%-d").to_string()).unwrap_or_default(),
+                    focused_field: ModalField::Title,
+                    error: None,
+                    editing_task_id: Some(id),
+                    cursor_pos,
+                    wrap_width,
+                };
+                self.modal_tag_ids = db::get_task_tag_ids(&self.db, id).unwrap_or_default();
+                self.reload_tags();
+                self.mode = AppMode::EditTask;
+            }
+        }
+    }
+
+    // Delete (Phase 7)
+
+    pub fn open_delete_confirm(&mut self) {
+        if self.current_task_id().is_some() {
+            self.mode = AppMode::DeleteConfirm;
+        }
+    }
+
+    pub fn cancel_delete(&mut self) {
+        self.mode = AppMode::Board;
+    }
+
+    pub fn confirm_delete(&mut self) {
+        if let Some(task_id) = self.current_task_id() {
+            if let Some(task) = self.find_task(task_id).cloned() {
+                self.undo_stack.push(UndoAction::DeleteTask {
+                    title: task.title.clone(),
+                    description: task.description.clone(),
+                    priority: task.priority,
+                    column: task.column,
+                    due_date: task.due_date,
+                });
+                let _ = db::delete_task(&self.db, task_id);
+                self.reload_tasks();
+                self.clamp_cursor(task.column);
+                self.set_flash(format!("Deleted '{}'", task.title));
+            }
+        }
+        self.mode = AppMode::Board;
+    }
+
+    // Clear Done column
+
+    pub fn open_clear_done_confirm(&mut self) {
+        let done_count = self.tasks_for_column(Column::Done).len();
+        if done_count > 0 {
+            self.mode = AppMode::ClearDoneConfirm;
+        }
+    }
+
+    pub fn cancel_clear_done(&mut self) {
+        self.mode = AppMode::Board;
+    }
+
+    pub fn confirm_clear_done(&mut self) {
+        let done_tasks: Vec<_> = self
+            .tasks
+            .iter()
+            .filter(|t| t.column == Column::Done)
+            .cloned()
+            .collect();
+        let count = done_tasks.len();
+        for task in &done_tasks {
+            let _ = db::delete_task(&self.db, task.id);
+        }
+        self.reload_tasks();
+        self.clamp_cursor(Column::Done);
+        self.set_flash(format!("Cleared {} done task{}", count, if count == 1 { "" } else { "s" }));
+        self.mode = AppMode::Board;
+    }
+
+    // Undo (Phase 7)
+
+    pub fn undo(&mut self) {
+        if let Some(action) = self.undo_stack.pop() {
+            match action {
+                UndoAction::MoveTask {
+                    task_id,
+                    from_column,
+                } => {
+                    let _ = db::update_task_column(&self.db, task_id, from_column);
+                    self.reload_tasks();
+                    self.focused_column = from_column;
+                    self.set_cursor_to_task(task_id, from_column);
+                    self.set_flash("Undone: move task".to_string());
+                }
+                UndoAction::PriorityChange {
+                    task_id, previous, ..
+                } => {
+                    let _ = db::update_task_priority(&self.db, task_id, previous);
+                    self.reload_tasks();
+                    self.set_flash("Undone: priority change".to_string());
+                }
+                UndoAction::DeleteTask {
+                    title,
+                    description,
+                    priority,
+                    column,
+                    due_date,
+                } => {
+                    let _ = db::insert_task(
+                        &self.db,
+                        &title,
+                        &description,
+                        priority,
+                        column,
+                        due_date,
+                    );
+                    self.reload_tasks();
+                    self.focused_column = column;
+                    self.clamp_cursor(column);
+                    self.set_flash(format!("Undone: delete '{}'", title));
+                }
+                UndoAction::EditTask {
+                    task_id,
+                    prev_title,
+                    prev_description,
+                    prev_priority,
+                    prev_due_date,
+                } => {
+                    let _ = db::update_task(
+                        &self.db,
+                        task_id,
+                        &prev_title,
+                        &prev_description,
+                        prev_priority,
+                        prev_due_date,
+                    );
+                    self.reload_tasks();
+                    self.set_flash("Undone: edit task".to_string());
+                }
+            }
+        }
+    }
+
+    // Modal operations
+
+    pub fn open_new_task_modal(&mut self) {
+        self.modal = ModalState::new();
+        self.modal_tag_ids.clear();
+        self.reload_tags();
+        self.mode = AppMode::NewTask;
+    }
+
+    pub fn close_modal(&mut self) {
+        self.mode = AppMode::Board;
+        self.modal.error = None;
+    }
+
+    pub fn save_modal(&mut self) {
+        let title = self.modal.title.trim().to_string();
+        if title.is_empty() {
+            self.modal.error = Some("Title is required".to_string());
+            return;
+        }
+
+        let due_date = self.parse_modal_due_date();
+
+        match self.mode {
+            AppMode::NewTask => {
+                if let Ok(new_id) = db::insert_task(
+                    &self.db,
+                    &title,
+                    &self.modal.description,
+                    self.modal.priority,
+                    Column::Todo,
+                    due_date,
+                ) {
+                    let _ = db::set_task_tags(&self.db, new_id, &self.modal_tag_ids);
+                }
+                self.reload_tasks();
+                self.mode = AppMode::Board;
+            }
+            AppMode::EditTask => {
+                if let Some(task_id) = self.modal.editing_task_id {
+                    if let Some(task) = self.find_task(task_id).cloned() {
+                        self.undo_stack.push(UndoAction::EditTask {
+                            task_id,
+                            prev_title: task.title.clone(),
+                            prev_description: task.description.clone(),
+                            prev_priority: task.priority,
+                            prev_due_date: task.due_date,
+                        });
+                    }
+                    let _ = db::update_task(
+                        &self.db,
+                        task_id,
+                        &title,
+                        &self.modal.description,
+                        self.modal.priority,
+                        due_date,
+                    );
+                    let _ = db::set_task_tags(&self.db, task_id, &self.modal_tag_ids);
+                    self.reload_tasks();
+                }
+                self.mode = AppMode::Board;
+            }
+            _ => {}
+        }
+
+        self.modal.error = None;
+    }
+
+    fn parse_modal_due_date(&self) -> Option<chrono::NaiveDate> {
+        let year: i32 = self.modal.due_year.parse().ok()?;
+        let month: u32 = self.modal.due_month.parse().ok()?;
+        let day: u32 = self.modal.due_day.parse().ok()?;
+        chrono::NaiveDate::from_ymd_opt(year, month, day)
+    }
+
+    fn sync_cursor_to_end(&mut self) {
+        self.modal.cursor_pos = match self.modal.focused_field {
+            ModalField::Title => self.modal.title.len(),
+            ModalField::Description => self.modal.description.len(),
+            _ => 0,
+        };
+    }
+
+    pub fn modal_next_field(&mut self) {
+        let fields = ModalField::all();
+        let current = self.modal.focused_field.index();
+        let next = (current + 1) % fields.len();
+        self.modal.focused_field = ModalField::from_index(next);
+        self.sync_cursor_to_end();
+    }
+
+    pub fn modal_prev_field(&mut self) {
+        let fields = ModalField::all();
+        let current = self.modal.focused_field.index();
+        let prev = if current == 0 {
+            fields.len() - 1
+        } else {
+            current - 1
+        };
+        self.modal.focused_field = ModalField::from_index(prev);
+        self.sync_cursor_to_end();
+    }
+
+    pub fn modal_insert_char(&mut self, c: char) {
+        match self.modal.focused_field {
+            ModalField::Title => {
+                let pos = self.modal.cursor_pos.min(self.modal.title.len());
+                self.modal.title.insert(pos, c);
+                self.modal.cursor_pos = pos + c.len_utf8();
+            }
+            ModalField::Description => {
+                let pos = self.modal.cursor_pos.min(self.modal.description.len());
+                self.modal.description.insert(pos, c);
+                self.modal.cursor_pos = pos + c.len_utf8();
+            }
+            ModalField::Priority => {
+                if c == ' ' {
+                    self.modal.priority = match self.modal.priority {
+                        Priority::Low => Priority::Medium,
+                        Priority::Medium => Priority::High,
+                        Priority::High => Priority::Low,
+                    };
+                }
+            }
+            ModalField::Tag => {
+                if c == ' ' {
+                    self.cycle_modal_tag();
+                }
+            }
+            ModalField::DueDateYear => {
+                if c.is_ascii_digit() && self.modal.due_year.len() < 4 {
+                    self.modal.due_year.push(c);
+                }
+            }
+            ModalField::DueDateMonth => {
+                if c.is_ascii_digit() && self.modal.due_month.len() < 2 {
+                    self.modal.due_month.push(c);
+                }
+            }
+            ModalField::DueDateDay => {
+                if c.is_ascii_digit() && self.modal.due_day.len() < 2 {
+                    self.modal.due_day.push(c);
+                }
+            }
+        }
+        self.modal.error = None;
+    }
+
+    pub fn modal_insert_newline(&mut self) {
+        if self.modal.focused_field == ModalField::Description {
+            let pos = self.modal.cursor_pos.min(self.modal.description.len());
+            self.modal.description.insert(pos, '\n');
+            self.modal.cursor_pos = pos + 1;
+        }
+    }
+
+    pub fn modal_backspace(&mut self) {
+        match self.modal.focused_field {
+            ModalField::Title => {
+                if self.modal.cursor_pos > 0 {
+                    let prev = prev_char_boundary(&self.modal.title, self.modal.cursor_pos);
+                    self.modal.title.remove(prev);
+                    self.modal.cursor_pos = prev;
+                }
+            }
+            ModalField::Description => {
+                if self.modal.cursor_pos > 0 {
+                    let prev = prev_char_boundary(&self.modal.description, self.modal.cursor_pos);
+                    self.modal.description.remove(prev);
+                    self.modal.cursor_pos = prev;
+                }
+            }
+            ModalField::Priority | ModalField::Tag => {}
+            ModalField::DueDateYear => {
+                self.modal.due_year.pop();
+            }
+            ModalField::DueDateMonth => {
+                self.modal.due_month.pop();
+            }
+            ModalField::DueDateDay => {
+                self.modal.due_day.pop();
+            }
+        }
+        self.modal.error = None;
+    }
+
+    pub fn modal_cursor_left(&mut self) {
+        match self.modal.focused_field {
+            ModalField::Title => {
+                if self.modal.cursor_pos > 0 {
+                    self.modal.cursor_pos =
+                        prev_char_boundary(&self.modal.title, self.modal.cursor_pos);
+                }
+            }
+            ModalField::Description => {
+                if self.modal.cursor_pos > 0 {
+                    self.modal.cursor_pos =
+                        prev_char_boundary(&self.modal.description, self.modal.cursor_pos);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn modal_cursor_right(&mut self) {
+        match self.modal.focused_field {
+            ModalField::Title => {
+                if self.modal.cursor_pos < self.modal.title.len() {
+                    self.modal.cursor_pos =
+                        next_char_boundary(&self.modal.title, self.modal.cursor_pos);
+                }
+            }
+            ModalField::Description => {
+                if self.modal.cursor_pos < self.modal.description.len() {
+                    self.modal.cursor_pos =
+                        next_char_boundary(&self.modal.description, self.modal.cursor_pos);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn modal_cursor_up(&mut self) {
+        let text = match self.modal.focused_field {
+            ModalField::Title => &self.modal.title,
+            ModalField::Description => &self.modal.description,
+            _ => return,
+        };
+        let w = self.modal.wrap_width.max(1);
+        let pos = self.modal.cursor_pos.min(text.len());
+        let (row, col) = byte_to_row_col(text, pos, w);
+        if row == 0 {
+            return;
+        }
+        self.modal.cursor_pos = row_col_to_byte(text, row - 1, col, w);
+    }
+
+    pub fn modal_cursor_down(&mut self) {
+        let text = match self.modal.focused_field {
+            ModalField::Title => &self.modal.title,
+            ModalField::Description => &self.modal.description,
+            _ => return,
+        };
+        let w = self.modal.wrap_width.max(1);
+        let pos = self.modal.cursor_pos.min(text.len());
+        let (row, col) = byte_to_row_col(text, pos, w);
+        let total = total_visual_rows(text, w);
+        if row + 1 >= total {
+            return;
+        }
+        self.modal.cursor_pos = row_col_to_byte(text, row + 1, col, w);
+    }
+
+    // Help toggle (Phase 11)
+
+    // Scroll management — call before render
+    pub fn update_scroll(&mut self, col_width: usize, col_height: usize) {
+        let prefix_len = 6;
+        let title_width = col_width.saturating_sub(prefix_len).max(1);
+
+        for col in Column::all() {
+            let tasks = self.tasks_for_column(col);
+            let cursor = self.cursor_positions[col.index()];
+
+            // Calculate visual line for each task
+            let mut cursor_start_line: usize = 0;
+            let mut cursor_end_line: usize = 0;
+
+            for (i, task) in tasks.iter().enumerate() {
+                let title_lines = wrapped_line_count(&task.title, title_width);
+                let tag_lines = if task.tags.is_empty() { 0 } else { 1 };
+                let task_height = title_lines + tag_lines + 1; // +1 for due date
+
+                if i == cursor {
+                    cursor_start_line = cursor_end_line;
+                    cursor_end_line = cursor_start_line + task_height;
+                    break;
+                }
+                cursor_end_line += task_height;
+            }
+
+            let offset = &mut self.scroll_offsets[col.index()];
+            if cursor_start_line < *offset {
+                *offset = cursor_start_line;
+            } else if cursor_end_line > *offset + col_height {
+                *offset = cursor_end_line.saturating_sub(col_height);
+            }
+        }
+    }
+
+    pub fn toggle_help(&mut self) {
+        self.show_help = !self.show_help;
+    }
+
+    // Search (Phase 9)
+
+    pub fn open_search(&mut self) {
+        self.search_query.clear();
+        self.search_active = true;
+        self.mode = AppMode::SearchFilter;
+    }
+
+    pub fn close_search(&mut self) {
+        self.search_active = false;
+        self.search_query.clear();
+        self.mode = AppMode::Board;
+        for col in Column::all() {
+            self.clamp_cursor(col);
+        }
+    }
+
+    pub fn lock_search(&mut self) {
+        // Keep filter active, go back to board
+        self.mode = AppMode::Board;
+        for col in Column::all() {
+            self.clamp_cursor(col);
+        }
+    }
+
+    pub fn search_insert_char(&mut self, c: char) {
+        self.search_query.push(c);
+        for col in Column::all() {
+            self.clamp_cursor(col);
+        }
+    }
+
+    pub fn search_backspace(&mut self) {
+        self.search_query.pop();
+        for col in Column::all() {
+            self.clamp_cursor(col);
+        }
+    }
+
+    // Tag management (Phase 8)
+
+    pub fn open_tag_management(&mut self) {
+        self.reload_tags();
+        self.tag_cursor = 0;
+        self.tag_editing = false;
+        self.tag_edit_name.clear();
+        self.mode = AppMode::TagManagement;
+    }
+
+    pub fn close_tag_management(&mut self) {
+        self.tag_editing = false;
+        self.mode = AppMode::Board;
+    }
+
+    pub fn tag_cursor_up(&mut self) {
+        if self.tag_cursor > 0 {
+            self.tag_cursor -= 1;
+        }
+    }
+
+    pub fn tag_cursor_down(&mut self) {
+        if !self.tags.is_empty() && self.tag_cursor < self.tags.len() - 1 {
+            self.tag_cursor += 1;
+        }
+    }
+
+    pub fn tag_start_create(&mut self) {
+        self.tag_edit_name.clear();
+        self.tag_editing = true;
+    }
+
+    pub fn tag_start_rename(&mut self) {
+        if let Some(tag) = self.tags.get(self.tag_cursor) {
+            self.tag_edit_name = tag.name.clone();
+            self.tag_editing = true;
+        }
+    }
+
+    pub fn tag_confirm_edit(&mut self) {
+        let name = self.tag_edit_name.trim().to_string();
+        if name.is_empty() {
+            self.tag_editing = false;
+            return;
+        }
+        // If cursor is past end of tags, we're creating; otherwise renaming
+        if self.tag_cursor >= self.tags.len() {
+            let _ = db::insert_tag(&self.db, &name);
+        } else if let Some(tag) = self.tags.get(self.tag_cursor) {
+            let _ = db::rename_tag(&self.db, tag.id, &name);
+        }
+        self.tag_editing = false;
+        self.reload_tags();
+        self.reload_tasks();
+        if self.tag_cursor >= self.tags.len() && !self.tags.is_empty() {
+            self.tag_cursor = self.tags.len() - 1;
+        }
+    }
+
+    pub fn tag_cancel_edit(&mut self) {
+        self.tag_editing = false;
+    }
+
+    pub fn tag_delete(&mut self) {
+        if let Some(tag) = self.tags.get(self.tag_cursor) {
+            let _ = db::delete_tag(&self.db, tag.id);
+            // Clear filter if the deleted tag was the active filter
+            if self.filter_tag == Some(tag.id) {
+                self.filter_tag = None;
+            }
+            self.reload_tags();
+            self.reload_tasks();
+            if self.tag_cursor >= self.tags.len() && self.tag_cursor > 0 {
+                self.tag_cursor -= 1;
+            }
+        }
+    }
+
+    pub fn tag_edit_insert_char(&mut self, c: char) {
+        self.tag_edit_name.push(c);
+    }
+
+    pub fn tag_edit_backspace(&mut self) {
+        self.tag_edit_name.pop();
+    }
+
+    // Modal tag cycling
+    pub fn cycle_modal_tag(&mut self) {
+        if self.tags.is_empty() {
+            self.modal_tag_ids.clear();
+            return;
+        }
+        // Current single tag (or None)
+        let current = self.modal_tag_ids.first().copied();
+        let next = match current {
+            None => Some(self.tags[0].id),
+            Some(id) => {
+                if let Some(pos) = self.tags.iter().position(|t| t.id == id) {
+                    if pos + 1 < self.tags.len() {
+                        Some(self.tags[pos + 1].id)
+                    } else {
+                        None // wrap back to None
+                    }
+                } else {
+                    Some(self.tags[0].id)
+                }
+            }
+        };
+        self.modal_tag_ids.clear();
+        if let Some(id) = next {
+            self.modal_tag_ids.push(id);
+        }
+    }
+
+    // Tag filter (Phase 10)
+
+    pub fn set_tag_filter(&mut self, tag_id: Option<i64>) {
+        self.filter_tag = tag_id;
+        for col in Column::all() {
+            self.clamp_cursor(col);
+        }
+        self.mode = AppMode::Board;
+    }
+}
+
+fn prev_char_boundary(s: &str, pos: usize) -> usize {
+    let mut p = pos.saturating_sub(1);
+    while p > 0 && !s.is_char_boundary(p) {
+        p -= 1;
+    }
+    p
+}
+
+fn next_char_boundary(s: &str, pos: usize) -> usize {
+    let mut p = pos + 1;
+    while p < s.len() && !s.is_char_boundary(p) {
+        p += 1;
+    }
+    p
+}
+
+/// Build a flat list of visual rows as (line_start_byte, line_len) accounting for wrapping.
+fn visual_rows(text: &str, wrap_width: usize) -> Vec<(usize, usize)> {
+    let mut rows = Vec::new();
+    let mut offset: usize = 0;
+    for line in text.split('\n') {
+        if line.is_empty() {
+            rows.push((offset, 0));
+        } else {
+            let mut remaining = line.len();
+            let mut pos = 0;
+            while remaining > 0 {
+                let chunk = remaining.min(wrap_width);
+                rows.push((offset + pos, chunk));
+                pos += chunk;
+                remaining -= chunk;
+            }
+        }
+        offset += line.len() + 1; // +1 for the \n
+    }
+    rows
+}
+
+fn total_visual_rows(text: &str, wrap_width: usize) -> usize {
+    visual_rows(text, wrap_width).len()
+}
+
+/// Convert a byte offset to (visual_row, column) given a wrap width.
+fn byte_to_row_col(text: &str, byte_pos: usize, wrap_width: usize) -> (usize, usize) {
+    let rows = visual_rows(text, wrap_width);
+    for (i, &(start, len)) in rows.iter().enumerate() {
+        let end = start + len;
+        // Cursor can be at end of row (after last char) only if it's the last row
+        // or if the next row starts a new logical line
+        if byte_pos >= start && byte_pos <= end {
+            // If exactly at end and there's a next row that continues this wrap, go to next row
+            if byte_pos == end && i + 1 < rows.len() {
+                let next_start = rows[i + 1].0;
+                if next_start == end {
+                    // next row is a continuation of the same logical line
+                    return (i + 1, 0);
+                }
+            }
+            return (i, byte_pos - start);
+        }
+    }
+    // Past end: last row
+    let last = rows.len().saturating_sub(1);
+    let col = if let Some(&(start, _)) = rows.last() {
+        byte_pos.saturating_sub(start)
+    } else {
+        0
+    };
+    (last, col)
+}
+
+fn wrapped_line_count(text: &str, width: usize) -> usize {
+    if width == 0 || text.is_empty() {
+        return 1;
+    }
+    let mut count = 0;
+    let mut remaining = text;
+    while !remaining.is_empty() {
+        count += 1;
+        if remaining.len() <= width {
+            break;
+        }
+        let boundary = width.min(remaining.len());
+        let split = if let Some(space_pos) = remaining[..boundary].rfind(' ') {
+            space_pos + 1
+        } else {
+            boundary
+        };
+        remaining = &remaining[split..];
+    }
+    count
+}
+
+/// Convert (visual_row, column) to a byte offset, clamping column to row length.
+fn row_col_to_byte(text: &str, row: usize, col: usize, wrap_width: usize) -> usize {
+    let rows = visual_rows(text, wrap_width);
+    if let Some(&(start, len)) = rows.get(row) {
+        let clamped_col = col.min(len);
+        (start + clamped_col).min(text.len())
+    } else {
+        text.len()
+    }
+}
