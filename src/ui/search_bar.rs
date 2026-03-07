@@ -1,8 +1,8 @@
-use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
+use ratatui::Frame;
 
 use crate::app::{App, AppMode};
 
@@ -15,10 +15,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     ];
 
     if app.search_query.is_empty() && !is_typing {
-        spans.push(Span::styled(
-            "search...",
-            Style::default().fg(Color::Gray),
-        ));
+        spans.push(Span::styled("search...", Style::default().fg(Color::Gray)));
     } else {
         spans.push(Span::styled(
             &app.search_query,

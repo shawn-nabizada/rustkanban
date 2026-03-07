@@ -1,4 +1,6 @@
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::crossterm::event::{
+    KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 
 use crate::app::{App, AppMode};
 
@@ -43,6 +45,7 @@ fn handle_board(app: &mut App, key: KeyEvent) {
         KeyCode::Char('p') | KeyCode::Char('P') => app.cycle_priority(),
         KeyCode::Char('s') | KeyCode::Char('S') => app.open_sort_menu(),
         KeyCode::Char('e') | KeyCode::Char('E') => app.open_edit_task_modal(),
+        KeyCode::Char('c') | KeyCode::Char('C') => app.duplicate_task(),
         KeyCode::Char('d') => app.open_delete_confirm(),
         KeyCode::Char('D') => app.open_clear_done_confirm(),
         KeyCode::Enter => app.open_detail_view(),
@@ -194,6 +197,59 @@ fn handle_search(app: &mut App, key: KeyEvent) {
         KeyCode::Enter => app.lock_search(),
         KeyCode::Backspace => app.search_backspace(),
         KeyCode::Char(c) => app.search_insert_char(c),
+        _ => {}
+    }
+}
+
+pub fn handle_mouse(app: &mut App, mouse: MouseEvent) {
+    // Only handle mouse in board/selected modes
+    match app.mode {
+        AppMode::Board | AppMode::Selected => {}
+        _ => return,
+    }
+
+    if app.show_help {
+        if matches!(mouse.kind, MouseEventKind::Down(_)) {
+            app.show_help = false;
+        }
+        return;
+    }
+
+    match mouse.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            if let Some(col) = app.column_at_x(mouse.column) {
+                app.focused_column = col;
+                if let Some(idx) = app.task_at_y(col, mouse.row) {
+                    app.cursor_positions[col.index()] = idx;
+                    // Start drag
+                    if let Some(task_id) = app.current_task_id() {
+                        app.drag_task = Some((task_id, col));
+                    }
+                }
+            }
+        }
+        MouseEventKind::Up(MouseButton::Left) => {
+            if let Some((task_id, from_col)) = app.drag_task.take() {
+                if let Some(to_col) = app.column_at_x(mouse.column) {
+                    if to_col != from_col {
+                        app.move_task_to_column(task_id, from_col, to_col);
+                        if app.mode == AppMode::Selected {
+                            app.deselect_task();
+                        }
+                    }
+                }
+            }
+        }
+        MouseEventKind::ScrollDown => {
+            if let Some(col) = app.column_at_x(mouse.column) {
+                app.scroll_column(col, 3);
+            }
+        }
+        MouseEventKind::ScrollUp => {
+            if let Some(col) = app.column_at_x(mouse.column) {
+                app.scroll_column(col, -3);
+            }
+        }
         _ => {}
     }
 }

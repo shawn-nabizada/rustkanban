@@ -7,17 +7,17 @@ pub mod search_bar;
 pub mod sort_menu;
 pub mod tag_screen;
 
-use ratatui::Frame;
+use ratatui::layout::Alignment;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
-use ratatui::layout::Alignment;
+use ratatui::Frame;
 
 use crate::app::{App, AppMode};
 
 const MIN_WIDTH: u16 = 80;
-const MIN_HEIGHT: u16 = 24;
+const MIN_HEIGHT: u16 = 30;
 
 pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
@@ -103,11 +103,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         Span::styled(": help", Style::default().fg(Color::Gray)),
     ]);
 
-    let chunks = Layout::horizontal([
-        Constraint::Min(1),
-        Constraint::Length(7),
-    ])
-    .split(area);
+    let chunks = Layout::horizontal([Constraint::Min(1), Constraint::Length(7)]).split(area);
 
     frame.render_widget(Paragraph::new(left), chunks[0]);
     frame.render_widget(Paragraph::new(right), chunks[1]);
@@ -130,7 +126,7 @@ pub fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
 }
 
 fn render_too_small(frame: &mut Frame, area: Rect) {
-    let msg = Paragraph::new("Terminal too small (need 80x24)")
+    let msg = Paragraph::new("Terminal too small (need 80x30)")
         .style(Style::default().fg(Color::Red))
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::NONE));

@@ -1,8 +1,8 @@
-use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::Frame;
 
 use crate::app::App;
 
@@ -19,11 +19,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
-    let chunks = Layout::vertical([
-        Constraint::Min(3),
-        Constraint::Length(2),
-    ])
-    .split(inner);
+    let chunks = Layout::vertical([Constraint::Min(3), Constraint::Length(2)]).split(inner);
 
     let mut lines: Vec<Line> = Vec::new();
 

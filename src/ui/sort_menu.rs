@@ -1,14 +1,18 @@
-use ratatui::Frame;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::Frame;
 
 use crate::app::App;
 
 pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
     let has_tags = !app.tags.is_empty();
-    let popup_height = if has_tags { 30 + app.tags.len() as u16 * 3 } else { 20 };
+    let popup_height = if has_tags {
+        30 + app.tags.len() as u16 * 3
+    } else {
+        20
+    };
     let popup = super::centered_rect(35, popup_height.min(60), area);
     frame.render_widget(Clear, popup);
 
@@ -34,7 +38,10 @@ pub fn render(frame: &mut Frame, app: &App) {
         } else {
             Style::default().fg(Color::White)
         };
-        lines.push(Line::from(Span::styled(format!("{}{}", marker, opt), style)));
+        lines.push(Line::from(Span::styled(
+            format!("{}{}", marker, opt),
+            style,
+        )));
     }
 
     // Tag filter section

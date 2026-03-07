@@ -1,8 +1,8 @@
-use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::Frame;
 
 use crate::app::App;
 
@@ -24,7 +24,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     let block = Block::default()
         .title("Task Detail")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan));
+        .border_style(Style::default().fg(app.theme.modal_border));
 
     let inner = block.inner(modal_area);
     frame.render_widget(block, modal_area);
@@ -33,7 +33,8 @@ pub fn render(frame: &mut Frame, app: &App) {
         Constraint::Length(2), // Title
         Constraint::Length(1), // Priority + Column
         Constraint::Length(1), // Due date
-        Constraint::Min(4),   // Description
+        Constraint::Length(1), // Tags
+        Constraint::Min(4),    // Description
         Constraint::Length(2), // Timestamps
         Constraint::Length(1), // Help
     ])
@@ -49,7 +50,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     frame.render_widget(Paragraph::new(title_line), chunks[0]);
 
     // Priority + Column
-    let priority_color = task.priority.color();
+    let priority_color = app.theme.priority_color(&task.priority);
     let info_line = Line::from(vec![
         Span::styled("Priority: ", Style::default().fg(Color::Gray)),
         Span::styled(
@@ -60,10 +61,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         ),
         Span::raw("  "),
         Span::styled("Column: ", Style::default().fg(Color::Gray)),
-        Span::styled(
-            task.column.display_name(),
-            Style::default().fg(Color::Cyan),
-        ),
+        Span::styled(task.column.display_name(), Style::default().fg(Color::Cyan)),
     ]);
     frame.render_widget(Paragraph::new(info_line), chunks[1]);
 
@@ -77,6 +75,23 @@ pub fn render(frame: &mut Frame, app: &App) {
         Span::styled(due_text, Style::default().fg(Color::White)),
     ]);
     frame.render_widget(Paragraph::new(due_line), chunks[2]);
+
+    // Tags
+    let tags_text = if task.tags.is_empty() {
+        "None".to_string()
+    } else {
+        task.tags.join(", ")
+    };
+    let tags_style = if task.tags.is_empty() {
+        Style::default().fg(Color::Gray)
+    } else {
+        Style::default().fg(app.theme.tag)
+    };
+    let tags_line = Line::from(vec![
+        Span::styled("Tags: ", Style::default().fg(Color::Gray)),
+        Span::styled(tags_text, tags_style),
+    ]);
+    frame.render_widget(Paragraph::new(tags_line), chunks[3]);
 
     // Description
     let desc_block = Block::default()
@@ -92,7 +107,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         .style(Style::default().fg(Color::White))
         .block(desc_block)
         .wrap(Wrap { trim: false });
-    frame.render_widget(desc, chunks[3]);
+    frame.render_widget(desc, chunks[4]);
 
     // Timestamps
     let ts_lines = vec![Line::from(vec![
@@ -108,7 +123,7 @@ pub fn render(frame: &mut Frame, app: &App) {
             Style::default().fg(Color::Gray),
         ),
     ])];
-    frame.render_widget(Paragraph::new(ts_lines), chunks[4]);
+    frame.render_widget(Paragraph::new(ts_lines), chunks[5]);
 
     // Help
     let help = Line::from(vec![
@@ -117,5 +132,5 @@ pub fn render(frame: &mut Frame, app: &App) {
         Span::styled("Esc/Enter", Style::default().fg(Color::Cyan)),
         Span::raw(": close"),
     ]);
-    frame.render_widget(Paragraph::new(help), chunks[5]);
+    frame.render_widget(Paragraph::new(help), chunks[6]);
 }

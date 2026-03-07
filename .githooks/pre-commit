@@ -1,0 +1,16 @@
+#!/bin/sh
+set -e
+
+echo "Running cargo fmt check..."
+if ! cargo fmt -- --check; then
+    echo "Format check failed. Run 'cargo fmt' to fix."
+    exit 1
+fi
+
+echo "Running cargo clippy..."
+if ! cargo clippy -- -D warnings; then
+    echo "Clippy check failed."
+    exit 1
+fi
+
+echo "All checks passed."

@@ -1,0 +1,23 @@
+# Maintainer: Shawn Nabizada
+pkgname=rustkanban-bin
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="A terminal (TUI) kanban board with vim-inspired navigation"
+arch=('x86_64' 'aarch64')
+url="https://github.com/shawn-nabizada/rustkanban"
+license=('BSL-1.1')
+provides=('rk')
+conflicts=('rustkanban')
+
+source_x86_64=("https://github.com/shawn-nabizada/rustkanban/releases/download/v${pkgver}/rk-linux-x86_64")
+source_aarch64=("https://github.com/shawn-nabizada/rustkanban/releases/download/v${pkgver}/rk-linux-aarch64")
+sha256sums_x86_64=('SKIP')
+sha256sums_aarch64=('SKIP')
+
+package() {
+    if [ "$CARCH" = "x86_64" ]; then
+        install -Dm755 "rk-linux-x86_64" "$pkgdir/usr/bin/rk"
+    elif [ "$CARCH" = "aarch64" ]; then
+        install -Dm755 "rk-linux-aarch64" "$pkgdir/usr/bin/rk"
+    fi
+}

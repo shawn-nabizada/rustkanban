@@ -1,21 +1,35 @@
-MIT License
+Business Source License 1.1
+
+Parameters
+
+  Licensor:             RustKanban Contributors
+  Licensed Work:        RustKanban (and associated documentation)
+  Additional Use Grant: Non-commercial use is permitted.
+  Change Date:          Four years from each release date.
+  Change License:       Apache License, Version 2.0
+
+---
 
 Copyright (c) 2026 RustKanban Contributors
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This Business Source License 1.1 (this "License") is a license for the
+Licensed Work. Licensor hereby grants you the right to copy, modify, create
+derivative works, redistribute, and make available the Licensed Work;
+provided that such use is only for non-Production purposes.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+"Production" means any use of the Licensed Work as part of an application
+or service that is used for internal or external business operations.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Notwithstanding the foregoing, you may use the Licensed Work for Production
+purposes only if such use complies with the Additional Use Grant.
+
+This License will automatically convert to the Change License on the Change
+Date. After the Change Date, your use of the Licensed Work will be governed
+by the Change License.
+
+All copies of the Licensed Work must include this License.
+
+THESE RIGHTS ARE GRANTED AS IS, WITHOUT ANY WARRANTY. TO THE EXTENT
+PERMITTED BY LAW, LICENSOR DISCLAIMS ALL IMPLIED WARRANTIES, INCLUDING BUT
+NOT LIMITED TO ANY WARRANTY OF DESIGN, MERCHANTABILITY, AND FITNESS FOR A
+PARTICULAR PURPOSE.

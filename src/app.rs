@@ -4,6 +4,7 @@ use rusqlite::Connection;
 
 use crate::db;
 use crate::model::{Column, Priority, Tag, Task};
+use crate::theme::Theme;
 use crate::undo::{UndoAction, UndoStack};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,10 +21,29 @@ pub enum AppMode {
     SearchFilter,
 }
 
+const PREF_SORT_MODE: &str = "sort_mode";
+const PREF_FOCUSED_COLUMN: &str = "focused_column";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortMode {
     DueDate,
     Priority,
+}
+
+impl SortMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SortMode::DueDate => "DueDate",
+            SortMode::Priority => "Priority",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "Priority" => SortMode::Priority,
+            _ => SortMode::DueDate,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,8 +107,8 @@ pub struct ModalState {
     pub focused_field: ModalField,
     pub error: Option<String>,
     pub editing_task_id: Option<i64>,
-    pub cursor_pos: usize,  // byte offset within the active text field
-    pub wrap_width: usize,  // inner width of the text field (set by renderer)
+    pub cursor_pos: usize, // byte offset within the active text field
+    pub wrap_width: usize, // inner width of the text field (set by renderer)
 }
 
 impl ModalState {
@@ -107,7 +127,6 @@ impl ModalState {
             wrap_width: 80,
         }
     }
-
 }
 
 pub struct App {
@@ -138,22 +157,34 @@ pub struct App {
     pub tag_editing: bool,
     // Modal tag selection
     pub modal_tag_ids: Vec<i64>,
+    pub modal_tag_cursor: usize,
+    pub theme: Theme,
     pub db: Connection,
+    // Mouse support
+    pub terminal_width: u16,
+    pub terminal_height: u16,
+    pub drag_task: Option<(i64, Column)>, // (task_id, from_column)
 }
 
 impl App {
-    pub fn new(db: Connection) -> Self {
+    pub fn new(db: Connection, theme: Theme) -> Self {
         let tasks = db::load_tasks(&db).unwrap_or_default();
         let tags = db::load_tags(&db).unwrap_or_default();
         App {
             mode: AppMode::Board,
             running: true,
-            focused_column: Column::Todo,
+            focused_column: match db::get_preference(&db, PREF_FOCUSED_COLUMN).as_deref() {
+                Some("in_progress") => Column::InProgress,
+                Some("done") => Column::Done,
+                _ => Column::Todo,
+            },
             cursor_positions: [0; 3],
             scroll_offsets: [0; 3],
             tasks,
             tags,
-            sort_mode: SortMode::DueDate,
+            sort_mode: db::get_preference(&db, PREF_SORT_MODE)
+                .map(|s| SortMode::from_str(&s))
+                .unwrap_or(SortMode::DueDate),
             modal: ModalState::new(),
             selected_task_id: None,
             detail_task_id: None,
@@ -169,7 +200,12 @@ impl App {
             tag_edit_name: String::new(),
             tag_editing: false,
             modal_tag_ids: Vec::new(),
+            modal_tag_cursor: 0,
+            theme,
             db,
+            terminal_width: 0,
+            terminal_height: 0,
+            drag_task: None,
         }
     }
 
@@ -182,7 +218,7 @@ impl App {
         }
     }
 
-    fn set_flash(&mut self, msg: String) {
+    pub fn set_flash(&mut self, msg: String) {
         self.flash_message = Some(msg);
         self.flash_expire = Some(Instant::now() + std::time::Duration::from_secs(2));
     }
@@ -202,8 +238,7 @@ impl App {
         if self.search_active && !self.search_query.is_empty() {
             let q = self.search_query.to_lowercase();
             tasks.retain(|t| {
-                t.title.to_lowercase().contains(&q)
-                    || t.description.to_lowercase().contains(&q)
+                t.title.to_lowercase().contains(&q) || t.description.to_lowercase().contains(&q)
             });
         }
 
@@ -248,7 +283,7 @@ impl App {
         self.tasks.iter().find(|t| t.id == id)
     }
 
-    fn clamp_cursor(&mut self, col: Column) {
+    pub fn clamp_cursor(&mut self, col: Column) {
         let count = self.tasks_for_column(col).len();
         let idx = col.index();
         if count == 0 {
@@ -258,7 +293,7 @@ impl App {
         }
     }
 
-    fn set_cursor_to_task(&mut self, task_id: i64, col: Column) {
+    pub fn set_cursor_to_task(&mut self, task_id: i64, col: Column) {
         let tasks = self.tasks_for_column(col);
         if let Some(pos) = tasks.iter().position(|t| t.id == task_id) {
             self.cursor_positions[col.index()] = pos;
@@ -266,6 +301,7 @@ impl App {
     }
 
     pub fn quit(&mut self) {
+        let _ = db::set_preference(&self.db, PREF_FOCUSED_COLUMN, self.focused_column.as_str());
         self.running = false;
     }
 
@@ -325,6 +361,18 @@ impl App {
         self.mode = AppMode::Board;
     }
 
+    pub fn move_task_to_column(&mut self, task_id: i64, from_col: Column, to_col: Column) {
+        let _ = db::update_task_column(&self.db, task_id, to_col);
+        self.undo_stack.push(UndoAction::MoveTask {
+            task_id,
+            from_column: from_col,
+        });
+        self.reload_tasks();
+        self.clamp_cursor(from_col);
+        self.focused_column = to_col;
+        self.set_cursor_to_task(task_id, to_col);
+    }
+
     pub fn move_selected_left(&mut self) {
         if let Some(task_id) = self.selected_task_id {
             if let Some(task) = self.find_task(task_id) {
@@ -334,15 +382,7 @@ impl App {
                     return;
                 }
                 let to_col = Column::from_index(col_idx - 1).unwrap();
-                let _ = db::update_task_column(&self.db, task_id, to_col);
-                self.undo_stack.push(UndoAction::MoveTask {
-                    task_id,
-                    from_column: from_col,
-                });
-                self.reload_tasks();
-                self.clamp_cursor(from_col);
-                self.focused_column = to_col;
-                self.set_cursor_to_task(task_id, to_col);
+                self.move_task_to_column(task_id, from_col, to_col);
             }
         }
     }
@@ -356,15 +396,7 @@ impl App {
                     return;
                 }
                 let to_col = Column::from_index(col_idx + 1).unwrap();
-                let _ = db::update_task_column(&self.db, task_id, to_col);
-                self.undo_stack.push(UndoAction::MoveTask {
-                    task_id,
-                    from_column: from_col,
-                });
-                self.reload_tasks();
-                self.clamp_cursor(from_col);
-                self.focused_column = to_col;
-                self.set_cursor_to_task(task_id, to_col);
+                self.move_task_to_column(task_id, from_col, to_col);
             }
         }
     }
@@ -411,6 +443,7 @@ impl App {
             1 => SortMode::Priority,
             _ => SortMode::DueDate,
         };
+        let _ = db::set_preference(&self.db, PREF_SORT_MODE, self.sort_mode.as_str());
         self.mode = AppMode::Board;
     }
 
@@ -444,9 +477,18 @@ impl App {
                     title: task.title.clone(),
                     description: task.description.clone(),
                     priority: task.priority,
-                    due_year: task.due_date.map(|d| d.format("%Y").to_string()).unwrap_or_default(),
-                    due_month: task.due_date.map(|d| d.format("%-m").to_string()).unwrap_or_default(),
-                    due_day: task.due_date.map(|d| d.format("%-d").to_string()).unwrap_or_default(),
+                    due_year: task
+                        .due_date
+                        .map(|d| d.format("%Y").to_string())
+                        .unwrap_or_default(),
+                    due_month: task
+                        .due_date
+                        .map(|d| d.format("%-m").to_string())
+                        .unwrap_or_default(),
+                    due_day: task
+                        .due_date
+                        .map(|d| d.format("%-d").to_string())
+                        .unwrap_or_default(),
                     focused_field: ModalField::Title,
                     error: None,
                     editing_task_id: Some(id),
@@ -454,6 +496,7 @@ impl App {
                     wrap_width,
                 };
                 self.modal_tag_ids = db::get_task_tag_ids(&self.db, id).unwrap_or_default();
+                self.modal_tag_cursor = 0;
                 self.reload_tags();
                 self.mode = AppMode::EditTask;
             }
@@ -491,6 +534,32 @@ impl App {
         self.mode = AppMode::Board;
     }
 
+    // Duplicate task
+
+    pub fn duplicate_task(&mut self) {
+        if let Some(task_id) = self.current_task_id() {
+            if let Some(task) = self.find_task(task_id).cloned() {
+                let tag_ids = db::get_task_tag_ids(&self.db, task_id).unwrap_or_default();
+                if let Ok(new_id) = db::insert_task(
+                    &self.db,
+                    &task.title,
+                    &task.description,
+                    task.priority,
+                    task.column,
+                    task.due_date,
+                ) {
+                    if !tag_ids.is_empty() {
+                        let _ = db::set_task_tags(&self.db, new_id, &tag_ids);
+                    }
+                    self.undo_stack.push(UndoAction::DuplicateTask { new_id });
+                    self.reload_tasks();
+                    self.set_cursor_to_task(new_id, task.column);
+                    self.set_flash(format!("Duplicated '{}'", task.title));
+                }
+            }
+        }
+    }
+
     // Clear Done column
 
     pub fn open_clear_done_confirm(&mut self) {
@@ -517,7 +586,11 @@ impl App {
         }
         self.reload_tasks();
         self.clamp_cursor(Column::Done);
-        self.set_flash(format!("Cleared {} done task{}", count, if count == 1 { "" } else { "s" }));
+        self.set_flash(format!(
+            "Cleared {} done task{}",
+            count,
+            if count == 1 { "" } else { "s" }
+        ));
         self.mode = AppMode::Board;
     }
 
@@ -550,14 +623,8 @@ impl App {
                     column,
                     due_date,
                 } => {
-                    let _ = db::insert_task(
-                        &self.db,
-                        &title,
-                        &description,
-                        priority,
-                        column,
-                        due_date,
-                    );
+                    let _ =
+                        db::insert_task(&self.db, &title, &description, priority, column, due_date);
                     self.reload_tasks();
                     self.focused_column = column;
                     self.clamp_cursor(column);
@@ -581,6 +648,12 @@ impl App {
                     self.reload_tasks();
                     self.set_flash("Undone: edit task".to_string());
                 }
+                UndoAction::DuplicateTask { new_id } => {
+                    let _ = db::delete_task(&self.db, new_id);
+                    self.reload_tasks();
+                    self.clamp_cursor(self.focused_column);
+                    self.set_flash("Undone: duplicate task".to_string());
+                }
             }
         }
     }
@@ -590,6 +663,7 @@ impl App {
     pub fn open_new_task_modal(&mut self) {
         self.modal = ModalState::new();
         self.modal_tag_ids.clear();
+        self.modal_tag_cursor = 0;
         self.reload_tags();
         self.mode = AppMode::NewTask;
     }
@@ -711,7 +785,7 @@ impl App {
             }
             ModalField::Tag => {
                 if c == ' ' {
-                    self.cycle_modal_tag();
+                    self.toggle_modal_tag();
                 }
             }
             ModalField::DueDateYear => {
@@ -808,6 +882,12 @@ impl App {
     }
 
     pub fn modal_cursor_up(&mut self) {
+        if self.modal.focused_field == ModalField::Tag {
+            if self.modal_tag_cursor > 0 {
+                self.modal_tag_cursor -= 1;
+            }
+            return;
+        }
         let text = match self.modal.focused_field {
             ModalField::Title => &self.modal.title,
             ModalField::Description => &self.modal.description,
@@ -824,6 +904,12 @@ impl App {
     }
 
     pub fn modal_cursor_down(&mut self) {
+        if self.modal.focused_field == ModalField::Tag {
+            if !self.tags.is_empty() && self.modal_tag_cursor < self.tags.len() - 1 {
+                self.modal_tag_cursor += 1;
+            }
+            return;
+        }
         let text = match self.modal.focused_field {
             ModalField::Title => &self.modal.title,
             ModalField::Description => &self.modal.description,
@@ -855,16 +941,13 @@ impl App {
             let mut cursor_end_line: usize = 0;
 
             for (i, task) in tasks.iter().enumerate() {
-                let title_lines = wrapped_line_count(&task.title, title_width);
-                let tag_lines = if task.tags.is_empty() { 0 } else { 1 };
-                let task_height = title_lines + tag_lines + 1; // +1 for due date
-
+                let height = task_visual_height(task, title_width);
                 if i == cursor {
                     cursor_start_line = cursor_end_line;
-                    cursor_end_line = cursor_start_line + task_height;
+                    cursor_end_line = cursor_start_line + height;
                     break;
                 }
-                cursor_end_line += task_height;
+                cursor_end_line += height;
             }
 
             let offset = &mut self.scroll_offsets[col.index()];
@@ -1004,31 +1087,71 @@ impl App {
         self.tag_edit_name.pop();
     }
 
-    // Modal tag cycling
-    pub fn cycle_modal_tag(&mut self) {
-        if self.tags.is_empty() {
-            self.modal_tag_ids.clear();
-            return;
-        }
-        // Current single tag (or None)
-        let current = self.modal_tag_ids.first().copied();
-        let next = match current {
-            None => Some(self.tags[0].id),
-            Some(id) => {
-                if let Some(pos) = self.tags.iter().position(|t| t.id == id) {
-                    if pos + 1 < self.tags.len() {
-                        Some(self.tags[pos + 1].id)
-                    } else {
-                        None // wrap back to None
-                    }
-                } else {
-                    Some(self.tags[0].id)
-                }
+    // Modal tag toggling (multiple tags)
+    pub fn toggle_modal_tag(&mut self) {
+        if let Some(tag) = self.tags.get(self.modal_tag_cursor) {
+            let tag_id = tag.id;
+            if let Some(pos) = self.modal_tag_ids.iter().position(|&id| id == tag_id) {
+                self.modal_tag_ids.remove(pos);
+            } else {
+                self.modal_tag_ids.push(tag_id);
             }
-        };
-        self.modal_tag_ids.clear();
-        if let Some(id) = next {
-            self.modal_tag_ids.push(id);
+        }
+    }
+
+    // Mouse helpers
+
+    pub fn column_at_x(&self, x: u16) -> Option<Column> {
+        if self.terminal_width == 0 {
+            return None;
+        }
+        let col_width = self.terminal_width / 3;
+        let idx = (x / col_width).min(2) as usize;
+        Column::from_index(idx)
+    }
+
+    pub fn task_at_y(&self, col: Column, y: u16) -> Option<usize> {
+        // Board inner area starts at y=1 (after top border)
+        if y == 0 {
+            return None;
+        }
+        let inner_y = (y - 1) as usize;
+
+        let col_width = (self.terminal_width / 3).saturating_sub(2) as usize;
+        let prefix_len = 6;
+        let title_width = col_width.saturating_sub(prefix_len).max(1);
+
+        let tasks = self.tasks_for_column(col);
+        let scroll = self.scroll_offsets[col.index()];
+        let target_line = inner_y + scroll;
+
+        let mut line = 0;
+        for (i, task) in tasks.iter().enumerate() {
+            let height = task_visual_height(task, title_width);
+            if target_line >= line && target_line < line + height {
+                return Some(i);
+            }
+            line += height;
+        }
+        None
+    }
+
+    pub fn scroll_column(&mut self, col: Column, delta: i32) {
+        let idx = col.index();
+        if delta < 0 {
+            self.scroll_offsets[idx] = self.scroll_offsets[idx].saturating_sub((-delta) as usize);
+        } else {
+            // Clamp to content height to avoid scrolling past the end
+            let col_width = (self.terminal_width / 3).saturating_sub(2) as usize;
+            let prefix_len = 6;
+            let title_width = col_width.saturating_sub(prefix_len).max(1);
+            let total_height: usize = self
+                .tasks_for_column(col)
+                .iter()
+                .map(|t| task_visual_height(t, title_width))
+                .sum();
+            let new_offset = self.scroll_offsets[idx].saturating_add(delta as usize);
+            self.scroll_offsets[idx] = new_offset.min(total_height.saturating_sub(1));
         }
     }
 
@@ -1106,6 +1229,12 @@ fn byte_to_row_col_with(rows: &[(usize, usize)], byte_pos: usize) -> (usize, usi
         0
     };
     (last, col)
+}
+
+fn task_visual_height(task: &crate::model::Task, title_width: usize) -> usize {
+    let title_lines = wrapped_line_count(&task.title, title_width);
+    let tag_lines = if task.tags.is_empty() { 0 } else { 1 };
+    title_lines + tag_lines + 1 // +1 for due date line
 }
 
 fn wrapped_line_count(text: &str, width: usize) -> usize {

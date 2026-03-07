@@ -1,8 +1,8 @@
-use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::Frame;
 
 use crate::app::{App, AppMode, ModalField};
 
@@ -21,36 +21,38 @@ pub fn render(frame: &mut Frame, app: &App) {
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan));
+        .border_style(Style::default().fg(app.theme.modal_border));
 
     let inner = block.inner(modal_area);
     frame.render_widget(block, modal_area);
 
+    let tag_height = (2 + app.tags.len().clamp(1, 5)) as u16;
+
     let chunks = Layout::vertical([
-        Constraint::Length(4), // Title (2 lines + borders)
-        Constraint::Length(6), // Description
-        Constraint::Length(3), // Priority
-        Constraint::Length(3), // Tag
-        Constraint::Length(3), // Due Date
-        Constraint::Length(2), // Error / help
+        Constraint::Length(4),          // Title
+        Constraint::Length(6),          // Description
+        Constraint::Length(3),          // Priority
+        Constraint::Length(tag_height), // Tags
+        Constraint::Length(3),          // Due Date
+        Constraint::Length(2),          // Error / help
     ])
     .split(inner);
 
     render_text_field(frame, app, chunks[0], ModalField::Title, "Title *");
-    render_text_field(frame, app, chunks[1], ModalField::Description, "Description");
+    render_text_field(
+        frame,
+        app,
+        chunks[1],
+        ModalField::Description,
+        "Description",
+    );
     render_priority_field(frame, app, chunks[2]);
     render_tag_field(frame, app, chunks[3]);
     render_due_date_field(frame, app, chunks[4]);
     render_footer(frame, app, chunks[5]);
 }
 
-fn render_text_field(
-    frame: &mut Frame,
-    app: &App,
-    area: Rect,
-    field: ModalField,
-    label: &str,
-) {
+fn render_text_field(frame: &mut Frame, app: &App, area: Rect, field: ModalField, label: &str) {
     let focused = app.modal.focused_field == field;
     let text = match field {
         ModalField::Title => &app.modal.title,
@@ -58,14 +60,13 @@ fn render_text_field(
         _ => return,
     };
 
-    let has_error = field == ModalField::Title
-        && app.modal.error.is_some()
-        && text.trim().is_empty();
+    let has_error =
+        field == ModalField::Title && app.modal.error.is_some() && text.trim().is_empty();
 
     let border_color = if has_error {
-        Color::Red
+        app.theme.error
     } else if focused {
-        Color::Yellow
+        app.theme.modal_focused
     } else {
         Color::Gray
     };
@@ -101,9 +102,13 @@ fn render_text_field(
 
 fn render_priority_field(frame: &mut Frame, app: &App, area: Rect) {
     let focused = app.modal.focused_field == ModalField::Priority;
-    let border_color = if focused { Color::Yellow } else { Color::Gray };
+    let border_color = if focused {
+        app.theme.modal_focused
+    } else {
+        Color::Gray
+    };
 
-    let priority_color = app.modal.priority.color();
+    let priority_color = app.theme.priority_color(&app.modal.priority);
 
     let block = Block::default()
         .title("Priority (Space to cycle)")
@@ -112,7 +117,9 @@ fn render_priority_field(frame: &mut Frame, app: &App, area: Rect) {
 
     let paragraph = Paragraph::new(Span::styled(
         app.modal.priority.as_str(),
-        Style::default().fg(priority_color).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(priority_color)
+            .add_modifier(Modifier::BOLD),
     ))
     .block(block);
 
@@ -121,28 +128,97 @@ fn render_priority_field(frame: &mut Frame, app: &App, area: Rect) {
 
 fn render_tag_field(frame: &mut Frame, app: &App, area: Rect) {
     let focused = app.modal.focused_field == ModalField::Tag;
-    let border_color = if focused { Color::Yellow } else { Color::Gray };
+    let border_color = if focused {
+        app.theme.modal_focused
+    } else {
+        Color::Gray
+    };
+
+    let title = if focused {
+        "Tags (Space: toggle, \u{2191}/\u{2193}: navigate)"
+    } else {
+        "Tags"
+    };
 
     let block = Block::default()
-        .title("Tag (Space to cycle)")
+        .title(title)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color));
 
-    let (label, style) = if let Some(&tag_id) = app.modal_tag_ids.first() {
-        if let Some(tag) = app.tags.iter().find(|t| t.id == tag_id) {
-            (
-                tag.name.clone(),
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-            )
-        } else {
-            ("None".to_string(), Style::default().fg(Color::Gray))
-        }
-    } else {
-        ("None".to_string(), Style::default().fg(Color::Gray))
-    };
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
 
-    let paragraph = Paragraph::new(Span::styled(label, style)).block(block);
-    frame.render_widget(paragraph, area);
+    if app.tags.is_empty() {
+        let msg = Paragraph::new(Span::styled(
+            "No tags (press T on board to create)",
+            Style::default().fg(Color::Gray),
+        ));
+        frame.render_widget(msg, inner);
+        return;
+    }
+
+    if focused {
+        let visible_height = inner.height as usize;
+        let cursor = app.modal_tag_cursor;
+
+        let scroll = if cursor >= visible_height {
+            cursor - visible_height + 1
+        } else {
+            0
+        };
+
+        let mut lines: Vec<Line> = Vec::new();
+        for (i, tag) in app
+            .tags
+            .iter()
+            .enumerate()
+            .skip(scroll)
+            .take(visible_height)
+        {
+            let checked = app.modal_tag_ids.contains(&tag.id);
+            let marker = if checked { "[x] " } else { "[ ] " };
+            let is_cursor = i == cursor;
+            let prefix = if is_cursor { "> " } else { "  " };
+
+            let style = if is_cursor {
+                Style::default()
+                    .fg(app.theme.cursor)
+                    .add_modifier(Modifier::BOLD)
+            } else if checked {
+                Style::default().fg(app.theme.tag)
+            } else {
+                Style::default().fg(Color::White)
+            };
+
+            lines.push(Line::from(vec![
+                Span::styled(prefix, style),
+                Span::styled(marker, style),
+                Span::styled(tag.name.as_str(), style),
+            ]));
+        }
+
+        frame.render_widget(Paragraph::new(lines), inner);
+    } else {
+        let selected: Vec<&str> = app
+            .tags
+            .iter()
+            .filter(|t| app.modal_tag_ids.contains(&t.id))
+            .map(|t| t.name.as_str())
+            .collect();
+
+        let (text, style) = if selected.is_empty() {
+            ("None".to_string(), Style::default().fg(Color::Gray))
+        } else {
+            (
+                selected.join(", "),
+                Style::default()
+                    .fg(app.theme.tag)
+                    .add_modifier(Modifier::BOLD),
+            )
+        };
+
+        frame.render_widget(Paragraph::new(Span::styled(text, style)), inner);
+    }
 }
 
 fn render_due_date_field(frame: &mut Frame, app: &App, area: Rect) {
@@ -161,7 +237,11 @@ fn render_due_date_field(frame: &mut Frame, app: &App, area: Rect) {
 
     for (i, (field, label, value)) in fields.iter().enumerate() {
         let focused = app.modal.focused_field == *field;
-        let border_color = if focused { Color::Yellow } else { Color::Gray };
+        let border_color = if focused {
+            app.theme.modal_focused
+        } else {
+            Color::Gray
+        };
 
         let display = if value.is_empty() && !focused {
             label.to_string()
@@ -193,7 +273,7 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
     if let Some(ref err) = app.modal.error {
         lines.push(Line::from(Span::styled(
             err.as_str(),
-            Style::default().fg(Color::Red),
+            Style::default().fg(app.theme.error),
         )));
     }
 
@@ -233,7 +313,7 @@ fn cursor_scroll(text: &str, cursor_byte: usize, width: usize, visible_height: u
         if line.is_empty() {
             cursor_line += 1;
         } else {
-            cursor_line += ((line.len() + width - 1) / width) as u16;
+            cursor_line += line.len().div_ceil(width) as u16;
         }
         consumed = line_end + 1; // +1 for the \n
     }

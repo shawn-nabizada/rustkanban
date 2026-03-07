@@ -1,7 +1,7 @@
-use ratatui::Frame;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::Frame;
 
 use crate::app::{App, AppMode};
 use crate::model::Column;
@@ -48,7 +48,10 @@ pub fn render(frame: &mut Frame, app: &App) {
         )),
         Line::from(""),
         Line::from(vec![
-            Span::styled("Y", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "Y",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
             Span::raw(": yes  "),
             Span::styled("N/Esc", Style::default().fg(Color::Cyan)),
             Span::raw(": cancel"),
