@@ -80,7 +80,7 @@ jobs:
         run: mv target/${{ matrix.target }}/release/rk.exe ${{ matrix.name }}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.name }}
           path: ${{ matrix.name }}
@@ -99,7 +99,7 @@ jobs:
         run: cargo run -- manpage > rk.1
 
       - name: Upload man page
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rk.1
           path: rk.1
