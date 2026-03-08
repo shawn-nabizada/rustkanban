@@ -126,7 +126,7 @@ jobs:
           path: rk.1
 
   publish:
-    needs: prepare
+    needs: [prepare, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
