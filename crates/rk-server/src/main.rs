@@ -53,7 +53,7 @@ async fn main() {
         .route("/api/v1/sync", post(routes::sync::combined))
         .route("/account/devices", get(routes::account::list_devices))
         .route(
-            "/account/devices/:id/revoke",
+            "/account/devices/{id}/revoke",
             post(routes::account::revoke_device),
         )
         .route("/account/delete", post(routes::account::delete_account))
