@@ -2313,6 +2313,7 @@ dependencies = [
  "rustkanban-shared",
  "serde",
  "serde_json",
+ "sha2",
  "toml",
  "unicode-width 0.2.0",
  "ureq",

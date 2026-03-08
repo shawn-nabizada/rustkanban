@@ -8,6 +8,7 @@ mod model;
 mod sync;
 mod theme;
 mod ui;
+mod update;
 
 use std::io::{self, Write};
 use std::time::Duration;
@@ -68,6 +69,12 @@ enum Commands {
     Sync,
     /// Show sync status
     Status,
+    /// Update to the latest version
+    Update {
+        /// Skip confirmation prompt
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -172,6 +179,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("Not logged in. Run `rk login` to enable sync.");
             }
         }
+        Some(Commands::Update { force }) => match update::perform_update(force) {
+            Ok(version) => println!(
+                "Updated to v{}. Restart `rk` to use the new version.",
+                version
+            ),
+            Err(e) => eprintln!("{}", e),
+        },
         Some(Commands::Sync) => {
             if !auth::is_logged_in() {
                 eprintln!("Not logged in. Run `rk login` first.");
@@ -213,6 +227,9 @@ fn run_tui(conn: rusqlite::Connection) -> Result<(), Box<dyn std::error::Error>>
 
     let t = theme::load_theme();
     let mut app = App::new(conn, t);
+
+    // Check for updates
+    app.available_update = update::check_for_update(&app.db);
 
     // Sync on startup
     if auth::is_logged_in() {

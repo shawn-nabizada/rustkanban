@@ -104,6 +104,7 @@ rk login            # authenticate with sync service (GitHub OAuth)
 rk logout           # log out from sync service
 rk sync             # sync with server (pull + push)
 rk status           # show sync status
+rk update           # update to the latest version
 ```
 
 ## Keybindings

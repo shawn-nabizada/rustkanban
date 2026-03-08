@@ -15,6 +15,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - Added UUIDs to tasks and tags (schema v2, auto-migrated from v1)
 - Export format v2 with UUIDs (v1 import still backward compatible)
 - Added text validation limits (500 char titles, 5000 char descriptions, 50 char tag names)
+- Added update notifications in TUI status bar (checks GitHub releases daily)
+- Added `rk update` command for self-updating to the latest version
 
 ### Changed
 - Switched to soft deletes internally (no user-facing change)

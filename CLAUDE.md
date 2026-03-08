@@ -44,6 +44,7 @@ All common tasks are available via [just](https://github.com/casey/just):
 - `rk logout` — log out from sync service
 - `rk sync` — sync with server (pull + push)
 - `rk status` — show sync status
+- `rk update` — self-update to the latest version (`--force` to skip cargo install detection)
 
 ## Pre-commit Hook
 ```sh
@@ -73,6 +74,7 @@ Sync is opt-in. The app works fully offline without an account. If logged in, au
 - `theme.rs` — Theme config from ~/.config/rustkanban/theme.toml
 - `auth.rs` — Credential management, GitHub OAuth login flow
 - `sync.rs` — Sync client (pull/push/combined via ureq)
+- `update.rs` — Version check (GitHub API, 24h cooldown) and self-update logic
 - `ui/` — All rendering. `mod.rs` is entry point, delegates to submodules (board, modal, detail, sort_menu, tag_screen, search_bar, help_bar, delete_confirm)
 - `crates/rk-server/static/` — Static assets (CSS) served by Axum
 - `crates/rk-server/templates/` — Askama HTML templates

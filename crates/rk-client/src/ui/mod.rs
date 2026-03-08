@@ -101,6 +101,17 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
 
     let mut right_spans = Vec::new();
 
+    if let Some(ref version) = app.available_update {
+        right_spans.push(Span::styled(
+            format!("Update v{} available ", version),
+            Style::default().fg(Color::Yellow),
+        ));
+        right_spans.push(Span::styled(
+            "(rk update) ",
+            Style::default().fg(Color::Gray),
+        ));
+    }
+
     match &app.sync_status {
         crate::app::SyncStatus::NotLoggedIn => {}
         crate::app::SyncStatus::Idle {

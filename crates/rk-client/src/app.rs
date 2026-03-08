@@ -179,6 +179,7 @@ pub struct App {
     pub terminal_height: u16,
     pub drag_task: Option<(i64, Column)>, // (task_id, from_column)
     pub sync_status: SyncStatus,
+    pub available_update: Option<String>,
 }
 
 impl App {
@@ -227,6 +228,7 @@ impl App {
             terminal_width: 0,
             terminal_height: 0,
             drag_task: None,
+            available_update: None,
             sync_status: if let Some(c) = creds {
                 SyncStatus::Idle {
                     last_synced: c.last_synced_at,
