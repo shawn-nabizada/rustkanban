@@ -164,12 +164,10 @@ pub fn login(
         .ok_or("Missing device_id in callback")?
         .to_string();
 
-    // Send response
-    let html = "<html><body><h2>Login successful!</h2><p>You can close this tab.</p></body></html>";
+    // Send response — redirect to server's styled success page
     let response = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        html.len(),
-        html
+        "HTTP/1.1 302 Found\r\nLocation: {}/login/success\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+        server
     );
     stream.write_all(response.as_bytes()).ok();
 

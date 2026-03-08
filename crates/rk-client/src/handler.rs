@@ -19,11 +19,6 @@ pub fn handle_event(app: &mut App, key: KeyEvent) {
 }
 
 fn handle_board(app: &mut App, key: KeyEvent) {
-    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('z') {
-        app.undo();
-        return;
-    }
-
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('r') {
         app.do_sync();
         return;

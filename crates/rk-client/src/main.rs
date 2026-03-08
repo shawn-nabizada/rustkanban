@@ -8,7 +8,6 @@ mod model;
 mod sync;
 mod theme;
 mod ui;
-mod undo;
 
 use std::io::{self, Write};
 use std::time::Duration;

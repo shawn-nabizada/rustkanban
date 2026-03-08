@@ -18,7 +18,7 @@ impl Config {
             server_url: std::env::var("SERVER_URL")
                 .unwrap_or_else(|_| "http://localhost:3000".into()),
             session_secret: std::env::var("SESSION_SECRET")
-                .unwrap_or_else(|_| "dev-secret-change-me".into()),
+                .unwrap_or_else(|_| "dev-secret-change-me-in-production-needs-32-bytes".into()),
             port: std::env::var("PORT")
                 .unwrap_or_else(|_| "3000".into())
                 .parse()

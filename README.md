@@ -18,7 +18,7 @@ A Rust terminal (TUI) kanban board with vim-inspired navigation, tags, search, S
 - **Mouse support** -- click to focus/select, scroll wheel, drag tasks between columns
 - **Sorting** -- sort by due date (default) or priority
 - **Due date warnings** -- color-coded urgency (red for overdue, yellow for soon)
-- **Undo** -- undo up to 20 actions (move, edit, delete, priority change)
+
 - **Export / Import** -- JSON export and import for backup or migration
 - **Theme configuration** -- customizable colors via TOML config file
 - **Cross-machine sync** -- opt-in sync via GitHub OAuth (works fully offline without an account)
@@ -127,7 +127,7 @@ rk status           # show sync status
 | T | Tag management |
 | / | Search |
 | Ctrl+R | Sync with server |
-| Ctrl+Z | Undo |
+
 | ? | Help |
 | Esc / Q | Quit |
 

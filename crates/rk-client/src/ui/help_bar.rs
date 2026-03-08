@@ -36,7 +36,6 @@ pub fn render(frame: &mut Frame, _app: &App) {
                 ("d", "Delete task"),
                 ("Shift+D", "Clear done column"),
                 ("P", "Cycle priority"),
-                ("Ctrl+Z", "Undo last action"),
             ],
         ),
         (

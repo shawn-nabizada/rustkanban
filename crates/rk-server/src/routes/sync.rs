@@ -31,7 +31,11 @@ pub async fn pull(
     Extension(pool): Extension<PgPool>,
     Json(payload): Json<SyncPayload>,
 ) -> Result<Json<SyncResponse>, AppError> {
-    let full_pull = should_full_pull(&pool, &auth, &payload).await?;
+    let device_id = auth.device_id.ok_or(AppError::Validation(
+        "Sync requires a device token, not an API token".into(),
+    ))?;
+
+    let full_pull = should_full_pull(&pool, device_id, &payload).await?;
 
     let tasks = if full_pull {
         fetch_all_tasks(&pool, auth.user_id).await?
@@ -59,7 +63,7 @@ pub async fn pull(
 
     // Update device
     sqlx::query("UPDATE devices SET last_synced_at = NOW(), stale = FALSE WHERE id = $1")
-        .bind(auth.device_id)
+        .bind(device_id)
         .execute(&pool)
         .await?;
 
@@ -80,6 +84,10 @@ pub async fn push(
     Extension(pool): Extension<PgPool>,
     Json(payload): Json<SyncPayload>,
 ) -> Result<Json<SyncResponse>, AppError> {
+    let device_id = auth.device_id.ok_or(AppError::Validation(
+        "Sync requires a device token, not an API token".into(),
+    ))?;
+
     validate_limits(&pool, auth.user_id, &payload).await?;
 
     let mut tx = pool.begin().await?;
@@ -127,7 +135,7 @@ pub async fn push(
 
     // Update device
     sqlx::query("UPDATE devices SET last_synced_at = NOW(), stale = FALSE WHERE id = $1")
-        .bind(auth.device_id)
+        .bind(device_id)
         .execute(&mut *tx)
         .await?;
 
@@ -150,13 +158,17 @@ pub async fn combined(
     Extension(pool): Extension<PgPool>,
     Json(payload): Json<SyncPayload>,
 ) -> Result<Json<SyncResponse>, AppError> {
+    let device_id = auth.device_id.ok_or(AppError::Validation(
+        "Sync requires a device token, not an API token".into(),
+    ))?;
+
     validate_limits(&pool, auth.user_id, &payload).await?;
 
     let mut tx = pool.begin().await?;
 
     // ── Pull phase ──────────────────────────────────────────────────────
 
-    let full_pull = should_full_pull_conn(&mut *tx, &auth, &payload).await?;
+    let full_pull = should_full_pull_conn(&mut *tx, device_id, &payload).await?;
 
     let mut response_tasks = if full_pull {
         fetch_all_tasks_conn(&mut *tx, auth.user_id).await?
@@ -225,7 +237,7 @@ pub async fn combined(
 
     // Update device
     sqlx::query("UPDATE devices SET last_synced_at = NOW(), stale = FALSE WHERE id = $1")
-        .bind(auth.device_id)
+        .bind(device_id)
         .execute(&mut *tx)
         .await?;
 
@@ -245,14 +257,14 @@ pub async fn combined(
 
 async fn should_full_pull(
     pool: &PgPool,
-    auth: &AuthUser,
+    device_id: Uuid,
     payload: &SyncPayload,
 ) -> Result<bool, AppError> {
     if payload.last_synced_at.is_none() {
         return Ok(true);
     }
     let stale: bool = sqlx::query_scalar("SELECT stale FROM devices WHERE id = $1")
-        .bind(auth.device_id)
+        .bind(device_id)
         .fetch_one(pool)
         .await
         .unwrap_or(false);
@@ -261,14 +273,14 @@ async fn should_full_pull(
 
 async fn should_full_pull_conn(
     conn: &mut PgConnection,
-    auth: &AuthUser,
+    device_id: Uuid,
     payload: &SyncPayload,
 ) -> Result<bool, AppError> {
     if payload.last_synced_at.is_none() {
         return Ok(true);
     }
     let stale: bool = sqlx::query_scalar("SELECT stale FROM devices WHERE id = $1")
-        .bind(auth.device_id)
+        .bind(device_id)
         .fetch_one(&mut *conn)
         .await
         .unwrap_or(false);

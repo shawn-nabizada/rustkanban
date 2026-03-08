@@ -4,28 +4,33 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}RustKanban{% endblock %}</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
-    <style>
-        .danger-zone { border: 2px solid var(--pico-color-red-500); padding: 1rem; border-radius: var(--pico-border-radius); margin-top: 2rem; }
-        .danger-zone h3 { color: var(--pico-color-red-500); }
-        .device-stale { opacity: 0.6; }
-        nav .brand { font-weight: bold; font-size: 1.2rem; }
-    </style>
+    <link rel="stylesheet" href="/static/style.css">
+    {% block head_extra %}{% endblock %}
 </head>
 <body>
-    <nav class="container">
-        <ul><li><a href="/" class="brand">RustKanban</a></li></ul>
-        <ul>
-            {% block nav_right %}
-            <li><a href="/login">Login with GitHub</a></li>
-            {% endblock %}
-        </ul>
+    <nav>
+        <div class="container nav-inner">
+            <a href="/" class="brand">RustKanban</a>
+            <ul class="nav-links">
+                {% block nav_right %}
+                {% if logged_in %}
+                <li><a href="/account">Account</a></li>
+                <li><a href="/auth/logout">Logout</a></li>
+                {% else %}
+                <li><a href="/login">Login with GitHub</a></li>
+                {% endif %}
+                {% endblock %}
+            </ul>
+        </div>
     </nav>
     <main class="container">
         {% block content %}{% endblock %}
     </main>
-    <footer class="container">
-        <small>RustKanban — A terminal kanban board</small>
+    <footer>
+        <div class="container">
+            <small>RustKanban &mdash; A terminal kanban board</small>
+        </div>
     </footer>
+    {% block scripts %}{% endblock %}
 </body>
 </html>

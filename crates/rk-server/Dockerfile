@@ -44,6 +44,7 @@ COPY --from=builder /build/target/release/rk-server /app/rk-server
 
 # Copy migrations -- the server loads them from ./migrations at startup.
 COPY crates/rk-server/migrations /app/migrations
+COPY crates/rk-server/static /app/static
 
 EXPOSE 3000
 

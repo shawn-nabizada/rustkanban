@@ -462,15 +462,6 @@ pub fn soft_delete_task(conn: &Connection, task_id: i64) -> SqliteResult<()> {
     Ok(())
 }
 
-pub fn undelete_task(conn: &Connection, task_id: i64) -> SqliteResult<()> {
-    let now = now_timestamp();
-    conn.execute(
-        "UPDATE tasks SET deleted = 0, deleted_at = NULL, updated_at = ?1 WHERE id = ?2",
-        rusqlite::params![now, task_id],
-    )?;
-    Ok(())
-}
-
 pub fn soft_delete_tag(conn: &Connection, tag_id: i64) -> SqliteResult<()> {
     let now = now_timestamp();
     conn.execute(
@@ -913,16 +904,6 @@ mod tests {
         soft_delete_task(&conn, id).unwrap();
         assert!(load_tasks(&conn).unwrap().is_empty());
         assert_eq!(load_all_tasks(&conn).unwrap().len(), 1);
-    }
-
-    #[test]
-    fn test_undelete_task() {
-        let conn = init_db_memory();
-        let id = insert_task(&conn, "T", "", Priority::Medium, Column::Todo, None).unwrap();
-        soft_delete_task(&conn, id).unwrap();
-        undelete_task(&conn, id).unwrap();
-        assert_eq!(load_tasks(&conn).unwrap().len(), 1);
-        assert!(!load_tasks(&conn).unwrap()[0].deleted);
     }
 
     #[test]

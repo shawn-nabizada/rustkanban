@@ -34,7 +34,7 @@ services:
       dockerfile: crates/rk-server/Dockerfile
     restart: unless-stopped
     ports:
-      - "80:3000"
+      - "3000:3000"
     depends_on:
       db:
         condition: service_healthy

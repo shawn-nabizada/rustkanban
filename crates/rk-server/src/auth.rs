@@ -11,7 +11,7 @@ use uuid::Uuid;
 #[allow(dead_code)]
 pub struct AuthUser {
     pub user_id: Uuid,
-    pub device_id: Uuid,
+    pub device_id: Option<Uuid>,
 }
 
 impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
@@ -32,7 +32,8 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
 
         let hash = hash_token(token);
 
-        let record = sqlx::query_as::<_, (Uuid, Uuid)>(
+        // Try device token first
+        if let Some(record) = sqlx::query_as::<_, (Uuid, Uuid)>(
             "SELECT user_id, device_id FROM auth_tokens \
              WHERE token_hash = $1 AND (expires_at IS NULL OR expires_at > NOW())",
         )
@@ -40,20 +41,44 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
         .fetch_optional(pool)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::UNAUTHORIZED)?;
+        {
+            // Debounce: only refresh if expiry is within 89 days (i.e., >1 day since last refresh)
+            let _ = sqlx::query(
+                "UPDATE auth_tokens SET expires_at = NOW() + INTERVAL '90 days' \
+                 WHERE token_hash = $1 AND expires_at < NOW() + INTERVAL '89 days'",
+            )
+            .bind(&hash)
+            .execute(pool)
+            .await;
 
-        // Refresh token expiry (90-day sliding window)
-        let _ = sqlx::query(
-            "UPDATE auth_tokens SET expires_at = NOW() + INTERVAL '90 days' WHERE token_hash = $1",
+            return Ok(AuthUser {
+                user_id: record.0,
+                device_id: Some(record.1),
+            });
+        }
+
+        // Try API token
+        if let Some(user_id) = sqlx::query_scalar::<_, Uuid>(
+            "SELECT user_id FROM api_tokens \
+             WHERE token_hash = $1 AND (expires_at IS NULL OR expires_at > NOW())",
         )
         .bind(&hash)
-        .execute(pool)
-        .await;
+        .fetch_optional(pool)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        {
+            let _ = sqlx::query("UPDATE api_tokens SET last_used_at = NOW() WHERE token_hash = $1")
+                .bind(&hash)
+                .execute(pool)
+                .await;
 
-        Ok(AuthUser {
-            user_id: record.0,
-            device_id: record.1,
-        })
+            return Ok(AuthUser {
+                user_id,
+                device_id: None,
+            });
+        }
+
+        Err(StatusCode::UNAUTHORIZED)
     }
 }
 

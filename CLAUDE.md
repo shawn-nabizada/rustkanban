@@ -11,6 +11,26 @@
 - `vhs demo.tape` — regenerate the demo GIF (requires [vhs](https://github.com/charmbracelet/vhs))
 - `rk manpage | man -l -` — preview the man page
 
+## Justfile (recommended)
+All common tasks are available via [just](https://github.com/casey/just):
+- `just build` — compile
+- `just test` / `just test test_name` — run tests
+- `just lint` — clippy with zero warnings
+- `just fmt` — format
+- `just check` — fmt + clippy + test (mirrors CI)
+- `just install` — install locally as `rk`
+- `just release X.Y.Z` — create release commit + tag
+- `just dev` — start local sync server on port 3000
+- `just demo` — regenerate demo GIF
+- `just manpage` — preview man page
+- `just clean` — clean build artifacts
+
+## Local Server Development
+1. Copy `crates/rk-server/.env.example` to `.env` in the project root
+2. Fill in `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` (create an OAuth app at https://github.com/settings/developers, callback URL: `http://localhost:3000/auth/callback`)
+3. Run `just dev` — starts PostgreSQL + Axum server on `http://localhost:3000`
+4. Server auto-runs migrations on startup
+
 ## CLI Subcommands
 - `rk` — launch TUI
 - `rk reset` — delete all tasks and tags (prompts Y/N)
@@ -48,12 +68,14 @@ Sync is opt-in. The app works fully offline without an account. If logged in, au
 - `model.rs` — Task, Tag, Priority, Column types
 - `handler.rs` — Input dispatch: matches AppMode, delegates to App methods. Includes `handle_mouse()`
 - `event.rs` — `AppEvent` enum (Key | Mouse), crossterm event polling
-- `undo.rs` — UndoAction enum (MoveTask, PriorityChange, DeleteTask, EditTask, DuplicateTask) + VecDeque stack (cap 20)
+
 - `export.rs` — JSON export/import (serde)
 - `theme.rs` — Theme config from ~/.config/rustkanban/theme.toml
 - `auth.rs` — Credential management, GitHub OAuth login flow
 - `sync.rs` — Sync client (pull/push/combined via ureq)
 - `ui/` — All rendering. `mod.rs` is entry point, delegates to submodules (board, modal, detail, sort_menu, tag_screen, search_bar, help_bar, delete_confirm)
+- `crates/rk-server/static/` — Static assets (CSS) served by Axum
+- `crates/rk-server/templates/` — Askama HTML templates
 
 ### Key Patterns
 - **State machine**: `AppMode` enum drives which handler + UI overlay is active
@@ -61,7 +83,7 @@ Sync is opt-in. The app works fully offline without an account. If logged in, au
 - **Theme**: `app.theme` has all colors. Use `app.theme.priority_color(&p)` not hardcoded colors
 - **Tests**: use `db::init_db_memory()` for in-memory SQLite
 - **Preferences**: use `PREF_*` constants in `app.rs` for key names, `SortMode::as_str()`/`from_str()` for serialization
-- **Move task**: use `app.move_task_to_column()` — shared by keyboard selection, mouse drag, and undo
+- **Move task**: use `app.move_task_to_column()` — shared by keyboard selection and mouse drag
 - **Task height**: use `task_visual_height()` — shared by scroll calculation and mouse hit detection
 - **Search highlight**: `highlight_matches()` uses char-level byte-offset mapping for Unicode safety
 - **Soft deletes**: `soft_delete_task()`/`soft_delete_tag()` set `deleted=1`, `load_tasks()`/`load_tags()` filter them out. `load_all_tasks()`/`load_all_tags()` include deleted.
@@ -89,9 +111,9 @@ Sync is opt-in. The app works fully offline without an account. If logged in, au
 ## Gotchas
 - New tasks always go to **Todo** column regardless of which column is focused
 - In modal: `Enter` = newline in description field, `Ctrl+S` = save (not Enter)
-- **Clear Done** (`Shift+D`) is NOT undoable (bulk soft-delete, no undo entries pushed)
+
 - **Tag deletion** soft-deletes the tag and silently removes it from all tasks
-- **Undo delete** restores via `undelete_task()` (soft delete reversal), tags still not restored
+
 - **Import** is additive — never replaces or modifies existing tasks/tags
 - Mouse drag deselects the task after moving (returns to Board mode)
 - `Ctrl+R` triggers manual sync (pull + push) from within the TUI
@@ -106,4 +128,4 @@ After any feature change, bug fix, or behavioral modification, review and update
 - `CHANGELOG.md` — add entry under `[Unreleased]` describing the change
 - `docs/USE_CASES.md` — add/update use case steps for affected functionality
 - `demo.tape` — update VHS recording script if the UI or workflow changed
-- `docs/plans/` — reference for design decisions (read-only, do not modify retroactively)
+

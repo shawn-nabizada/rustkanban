@@ -90,14 +90,7 @@ Comprehensive reference of every use case in the application, with step-by-step 
   - [14.4 Close search and clear filter](#144-close-search-and-clear-filter)
   - [14.5 Search match highlighting](#145-search-match-highlighting)
   - [14.6 Interact with board while search filter is active](#146-interact-with-board-while-search-filter-is-active)
-- [15. Undo](#15-undo)
-  - [15.1 Undo a task move](#151-undo-a-task-move)
-  - [15.2 Undo a task deletion](#152-undo-a-task-deletion)
-  - [15.3 Undo a task edit](#153-undo-a-task-edit)
-  - [15.4 Undo a priority change](#154-undo-a-priority-change)
-  - [15.5 Undo a task duplication](#155-undo-a-task-duplication)
-  - [15.6 Undo stack limit (20 actions)](#156-undo-stack-limit-20-actions)
-  - [15.7 Undo with empty stack](#157-undo-with-empty-stack)
+
 - [16. Help Overlay](#16-help-overlay)
   - [16.1 Open the help overlay](#161-open-the-help-overlay)
   - [16.2 Close the help overlay (keyboard)](#162-close-the-help-overlay-keyboard)
@@ -331,7 +324,7 @@ Comprehensive reference of every use case in the application, with step-by-step 
 3. The Edit Task modal opens, pre-populated with the task's current title, description, priority, tags, and due date
 4. Modify any fields
 5. Press `Ctrl+S` to save changes
-6. An undo action is recorded with the previous values
+
 
 ### 4.2 Edit a task from the detail view
 
@@ -484,7 +477,7 @@ Comprehensive reference of every use case in the application, with step-by-step 
 3. A confirmation dialog appears: "Delete '<title>'? (Y/N)"
 4. Press `Y` to confirm
 5. The task is deleted from the database
-6. An undo action is recorded (stores full task data for restoration)
+
 7. A flash message confirms the deletion
 
 ### 7.2 Cancel task deletion
@@ -505,7 +498,7 @@ Comprehensive reference of every use case in the application, with step-by-step 
 5. A flash message shows the count of cleared tasks
 
 **Notes:**
-- This action is NOT undoable (individual deletes within are not pushed to the undo stack)
+
 
 ### 7.4 Cancel clearing done tasks
 
@@ -532,7 +525,7 @@ Comprehensive reference of every use case in the application, with step-by-step 
 3. A new task is created in the same column with identical title, description, priority, due date, and tags
 4. The cursor moves to the newly created duplicate
 5. A flash message says "Duplicated '<title>'"
-6. An undo action is recorded that will delete the duplicate on undo
+
 
 ### 8.2 Duplicate when no task is under cursor
 
@@ -568,7 +561,7 @@ Comprehensive reference of every use case in the application, with step-by-step 
 2. Press `L` or `Right` to move the task one column to the right
 3. Press `J` or `Left` to move the task one column to the left
 4. The task moves in the database, the cursor follows the task to its new column
-5. An undo action is recorded for each move
+
 
 ### 9.4 Move a task at boundary column
 
@@ -593,7 +586,7 @@ Comprehensive reference of every use case in the application, with step-by-step 
 2. Drag the mouse to a different column
 3. Release the mouse button (left mouse button up)
 4. The task moves to the target column
-5. An undo action is recorded
+
 6. If the task was in Selected mode, it is deselected after the drag
 
 ### 9.7 Mouse drag that ends in the same column
@@ -601,7 +594,7 @@ Comprehensive reference of every use case in the application, with step-by-step 
 **Steps:**
 1. Click and hold on a task
 2. Release the mouse button in the same column
-3. Nothing happens (the task stays in place, no undo action recorded)
+3. Nothing happens (the task stays in place)
 
 ---
 
@@ -614,7 +607,7 @@ Comprehensive reference of every use case in the application, with step-by-step 
 2. Press `P`
 3. The priority cycles: Low → Medium → High → Low
 4. The priority indicator changes (L/M/H) with corresponding color
-5. An undo action is recorded with the previous priority
+
 
 ---
 
@@ -818,69 +811,6 @@ Comprehensive reference of every use case in the application, with step-by-step 
 
 ---
 
-## 15. Undo
-
-### 15.1 Undo a task move
-
-**Steps:**
-1. Select a task and move it to another column
-2. Press `Ctrl+Z`
-3. The task moves back to its original column
-4. The cursor follows the task
-5. Flash message: "Undone: move task"
-
-### 15.2 Undo a task deletion
-
-**Steps:**
-1. Delete a task
-2. Press `Ctrl+Z`
-3. The task is re-created with its original title, description, priority, column, and due date
-4. Flash message: "Undone: delete '<title>'"
-
-**Notes:**
-- Tags are not restored on undo of deletion (they were cascade-deleted)
-- The restored task gets a new database ID
-
-### 15.3 Undo a task edit
-
-**Steps:**
-1. Edit a task and save changes
-2. Press `Ctrl+Z`
-3. The task reverts to its previous title, description, priority, and due date
-4. Flash message: "Undone: edit task"
-
-### 15.4 Undo a priority change
-
-**Steps:**
-1. Cycle a task's priority with `P`
-2. Press `Ctrl+Z`
-3. The priority reverts to its previous value
-4. Flash message: "Undone: priority change"
-
-### 15.5 Undo a task duplication
-
-**Steps:**
-1. Duplicate a task with `C`
-2. Press `Ctrl+Z`
-3. The duplicated task is deleted from the database
-4. Flash message: "Undone: duplicate task"
-
-### 15.6 Undo stack limit (20 actions)
-
-**Steps:**
-1. Perform more than 20 undoable actions
-2. Press `Ctrl+Z` repeatedly
-3. Only the most recent 20 actions can be undone
-4. The oldest actions are permanently lost from the undo stack
-
-### 15.7 Undo with empty stack
-
-**Steps:**
-1. With no actions to undo, press `Ctrl+Z`
-2. Nothing happens (no error, no flash message)
-
----
-
 ## 16. Help Overlay
 
 ### 16.1 Open the help overlay
@@ -889,7 +819,7 @@ Comprehensive reference of every use case in the application, with step-by-step 
 1. Press `?` from the board view
 2. A centered overlay appears listing all keybindings organized by section:
    - Navigation (J/L, Up/Down)
-   - Tasks (Space, Enter, E, d, D, P, Ctrl+Z)
+   - Tasks (Space, Enter, E, d, D, P)
    - Selection (K, J/L)
    - Other (S, T, /, ?, Esc/Q)
 
@@ -922,7 +852,7 @@ Flash messages appear in the status bar after these actions:
 - Task deleted: "Deleted '<title>'"
 - Task duplicated: "Duplicated '<title>'"
 - Done column cleared: "Cleared N done task(s)"
-- Undo performed: "Undone: <action description>"
+
 
 ### 17.2 Flash message auto-dismissal
 

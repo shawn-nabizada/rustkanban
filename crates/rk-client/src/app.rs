@@ -5,7 +5,6 @@ use rusqlite::Connection;
 use crate::db;
 use crate::model::{Column, Priority, Tag, Task};
 use crate::theme::Theme;
-use crate::undo::{UndoAction, UndoStack};
 
 #[derive(Debug, Clone)]
 pub enum SyncStatus {
@@ -156,7 +155,7 @@ pub struct App {
     pub modal: ModalState,
     pub selected_task_id: Option<i64>,
     pub detail_task_id: Option<i64>,
-    pub undo_stack: UndoStack,
+
     pub flash_message: Option<String>,
     pub flash_expire: Option<Instant>,
     pub sort_menu_index: usize,
@@ -210,7 +209,7 @@ impl App {
             modal: ModalState::new(),
             selected_task_id: None,
             detail_task_id: None,
-            undo_stack: UndoStack::new(),
+
             flash_message: None,
             flash_expire: None,
             sort_menu_index: 0,
@@ -269,7 +268,7 @@ impl App {
             Ok(synced_at) => {
                 self.reload_tasks();
                 self.reload_tags();
-                self.undo_stack = UndoStack::new();
+
                 self.sync_status = SyncStatus::Idle {
                     last_synced: Some(synced_at),
                 };
@@ -280,11 +279,6 @@ impl App {
                 self.set_flash(e.to_string());
             }
         }
-    }
-
-    #[allow(dead_code)]
-    pub fn clear_undo_stack(&mut self) {
-        self.undo_stack = UndoStack::new();
     }
 
     pub fn tasks_for_column(&self, col: Column) -> Vec<&Task> {
@@ -419,10 +413,6 @@ impl App {
 
     pub fn move_task_to_column(&mut self, task_id: i64, from_col: Column, to_col: Column) {
         let _ = db::update_task_column(&self.db, task_id, to_col);
-        self.undo_stack.push(UndoAction::MoveTask {
-            task_id,
-            from_column: from_col,
-        });
         self.reload_tasks();
         self.clamp_cursor(from_col);
         self.focused_column = to_col;
@@ -463,10 +453,6 @@ impl App {
                     Priority::High => Priority::Low,
                 };
                 let _ = db::update_task_priority(&self.db, task_id, new_priority);
-                self.undo_stack.push(UndoAction::PriorityChange {
-                    task_id,
-                    previous: old_priority,
-                });
                 self.reload_tasks();
                 self.set_cursor_to_task(task_id, self.focused_column);
             }
@@ -568,10 +554,6 @@ impl App {
     pub fn confirm_delete(&mut self) {
         if let Some(task_id) = self.current_task_id() {
             if let Some(task) = self.find_task(task_id).cloned() {
-                self.undo_stack.push(UndoAction::DeleteTask {
-                    task_id,
-                    title: task.title.clone(),
-                });
                 let _ = db::soft_delete_task(&self.db, task_id);
                 self.reload_tasks();
                 self.clamp_cursor(task.column);
@@ -598,7 +580,7 @@ impl App {
                     if !tag_ids.is_empty() {
                         let _ = db::set_task_tags(&self.db, new_id, &tag_ids);
                     }
-                    self.undo_stack.push(UndoAction::DuplicateTask { new_id });
+
                     self.reload_tasks();
                     self.set_cursor_to_task(new_id, task.column);
                     self.set_flash(format!("Duplicated '{}'", task.title));
@@ -639,66 +621,6 @@ impl App {
             if count == 1 { "" } else { "s" }
         ));
         self.mode = AppMode::Board;
-    }
-
-    // Undo (Phase 7)
-
-    pub fn undo(&mut self) {
-        if let Some(action) = self.undo_stack.pop() {
-            match action {
-                UndoAction::MoveTask {
-                    task_id,
-                    from_column,
-                } => {
-                    let _ = db::update_task_column(&self.db, task_id, from_column);
-                    self.reload_tasks();
-                    self.focused_column = from_column;
-                    self.set_cursor_to_task(task_id, from_column);
-                    self.set_flash("Undone: move task".to_string());
-                }
-                UndoAction::PriorityChange {
-                    task_id, previous, ..
-                } => {
-                    let _ = db::update_task_priority(&self.db, task_id, previous);
-                    self.reload_tasks();
-                    self.set_flash("Undone: priority change".to_string());
-                }
-                UndoAction::DeleteTask { task_id, title } => {
-                    let _ = db::undelete_task(&self.db, task_id);
-                    self.reload_tasks();
-                    if let Some(task) = self.find_task(task_id) {
-                        let col = task.column;
-                        self.focused_column = col;
-                        self.set_cursor_to_task(task_id, col);
-                    }
-                    self.set_flash(format!("Undone: delete '{}'", title));
-                }
-                UndoAction::EditTask {
-                    task_id,
-                    prev_title,
-                    prev_description,
-                    prev_priority,
-                    prev_due_date,
-                } => {
-                    let _ = db::update_task(
-                        &self.db,
-                        task_id,
-                        &prev_title,
-                        &prev_description,
-                        prev_priority,
-                        prev_due_date,
-                    );
-                    self.reload_tasks();
-                    self.set_flash("Undone: edit task".to_string());
-                }
-                UndoAction::DuplicateTask { new_id } => {
-                    let _ = db::soft_delete_task(&self.db, new_id);
-                    self.reload_tasks();
-                    self.clamp_cursor(self.focused_column);
-                    self.set_flash("Undone: duplicate task".to_string());
-                }
-            }
-        }
     }
 
     // Modal operations
@@ -742,15 +664,6 @@ impl App {
             }
             AppMode::EditTask => {
                 if let Some(task_id) = self.modal.editing_task_id {
-                    if let Some(task) = self.find_task(task_id).cloned() {
-                        self.undo_stack.push(UndoAction::EditTask {
-                            task_id,
-                            prev_title: task.title.clone(),
-                            prev_description: task.description.clone(),
-                            prev_priority: task.priority,
-                            prev_due_date: task.due_date,
-                        });
-                    }
                     let _ = db::update_task(
                         &self.db,
                         task_id,

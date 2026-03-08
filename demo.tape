@@ -80,9 +80,6 @@ Sleep 2s
 Escape
 Sleep 1s
 
-# Undo
-Ctrl+Z
-Sleep 2s
 
 # Quit
 Type "q"

@@ -4,62 +4,216 @@
 
 {% block nav_right %}
 <li><a href="/account">Account</a></li>
-<li><a href="/auth/logout" role="button" class="outline">Logout</a></li>
+<li><a href="/auth/logout">Logout</a></li>
 {% endblock %}
 
 {% block content %}
-<h1>Account</h1>
+<h1 class="mt-4">Account</h1>
 
 <section>
-    <h2>Profile</h2>
-    <p><strong>GitHub:</strong> {{ username }}</p>
+    <div class="card">
+        <h2>Profile</h2>
+        <div class="profile-field mt-2">
+            <span class="label">GitHub:</span>
+            <span class="value">{{ username }}</span>
+        </div>
+    </div>
 </section>
 
 <section>
-    <h2>Devices</h2>
-    <table>
-        <thead>
-            <tr><th>Name</th><th>Last Synced</th><th>Status</th><th></th></tr>
-        </thead>
-        <tbody>
-            {% for device in devices %}
-            <tr{% if device.stale %} class="device-stale"{% endif %}>
-                <td>{{ device.name }}</td>
-                <td>{% match device.last_synced_at %}{% when Some with (val) %}{{ val }}{% when None %}Never{% endmatch %}</td>
-                <td>{% if device.stale %}Stale{% else %}Active{% endif %}</td>
-                <td>
-                    <form method="post" action="/account/devices/{{ device.id }}/revoke" style="margin:0">
-                        <button type="submit" class="outline secondary" style="padding:0.25rem 0.5rem;font-size:0.875rem">Revoke</button>
-                    </form>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <div class="section-header">
+        <h2>Devices</h2>
+    </div>
+    <div class="card" style="padding: 0; overflow: hidden;">
+        <div class="table-wrap">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Last Synced</th>
+                        <th>Status</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for device in devices %}
+                    <tr>
+                        <td>
+                            <form method="post" action="/account/devices/{{ device.id }}/rename" style="margin:0; display:flex; gap:0.25rem; align-items:center;">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                <input type="text" name="name" value="{{ device.name }}" class="input-inline" required maxlength="100">
+                                <button type="submit" class="btn btn-outline btn-sm">Save</button>
+                            </form>
+                        </td>
+                        <td>{% match device.last_synced_at %}{% when Some with (val) %}{{ val }}{% when None %}Never{% endmatch %}</td>
+                        <td>
+                            {% if device.stale %}
+                            <span class="badge badge-stale">Stale</span>
+                            {% else %}
+                            <span class="badge badge-active">Active</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('revoke-{{ device.id }}').showModal()">Revoke</button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    {% if devices.is_empty() %}
+                    <tr><td colspan="4" style="text-align:center; color:var(--muted);">No devices</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% for device in devices %}
+    <dialog id="revoke-{{ device.id }}">
+        <div class="modal-body">
+            <h3>Revoke device?</h3>
+            <p>This will disconnect <strong>{{ device.name }}</strong> and invalidate its sync token.</p>
+            <div class="modal-actions">
+                <button class="btn btn-outline" onclick="document.getElementById('revoke-{{ device.id }}').close()">Cancel</button>
+                <form method="post" action="/account/devices/{{ device.id }}/revoke" style="display:inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="btn btn-danger">Revoke</button>
+                </form>
+            </div>
+        </div>
+    </dialog>
+    {% endfor %}
+</section>
+
+<section>
+    <div class="section-header">
+        <h2>API Tokens</h2>
+    </div>
+
+    {% match new_api_token %}
+    {% when Some with (token) %}
+    <div class="card token-reveal">
+        <p><strong>Your new API token</strong> — copy it now, you won't see it again:</p>
+        <div class="code-block mt-2">{{ token }}</div>
+    </div>
+    {% when None %}
+    {% endmatch %}
+
+    <div class="card" style="padding: 0; overflow: hidden;">
+        <div class="table-wrap">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Label</th>
+                        <th>Created</th>
+                        <th>Last Used</th>
+                        <th>Expires</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for token in api_tokens %}
+                    <tr>
+                        <td>{{ token.label }}</td>
+                        <td>{{ token.created_at }}</td>
+                        <td>{% match token.last_used_at %}{% when Some with (val) %}{{ val }}{% when None %}Never{% endmatch %}</td>
+                        <td>{% match token.expires_at %}{% when Some with (val) %}{{ val }}{% when None %}Never{% endmatch %}</td>
+                        <td>
+                            <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('revoke-token-{{ token.id }}').showModal()">Revoke</button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    {% if api_tokens.is_empty() %}
+                    <tr><td colspan="5" style="text-align:center; color:var(--muted);">No API tokens</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    {% for token in api_tokens %}
+    <dialog id="revoke-token-{{ token.id }}">
+        <div class="modal-body">
+            <h3>Revoke API token?</h3>
+            <p>This will permanently invalidate the token <strong>{{ token.label }}</strong>.</p>
+            <div class="modal-actions">
+                <button class="btn btn-outline" onclick="document.getElementById('revoke-token-{{ token.id }}').close()">Cancel</button>
+                <form method="post" action="/account/tokens/{{ token.id }}/revoke" style="display:inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="btn btn-danger">Revoke</button>
+                </form>
+            </div>
+        </div>
+    </dialog>
+    {% endfor %}
+
+    <div class="card mt-2">
+        <h3>Create Token</h3>
+        <form method="post" action="/account/tokens/create" class="token-form mt-2">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div class="form-row">
+                <input type="text" name="label" placeholder="Token label (e.g. CI, scripts)" required maxlength="100" class="input-inline" style="width:16rem;">
+                <select name="expires" class="input-inline">
+                    <option value="90">Expires in 90 days</option>
+                    <option value="30">Expires in 30 days</option>
+                    <option value="never">Never expires</option>
+                </select>
+                <button type="submit" class="btn btn-accent btn-sm">Create</button>
+            </div>
+        </form>
+    </div>
+</section>
+
+<section>
+    <div class="section-header">
+        <h2>Export Data</h2>
+    </div>
+    <div class="card">
+        <p>Download all your synced tasks and tags as JSON. Same format as <code>rk export</code>.</p>
+        <a href="/account/export" class="btn btn-accent mt-2" style="display:inline-block;">Download JSON</a>
+    </div>
 </section>
 
 <div class="danger-zone">
     <h3>Danger Zone</h3>
     <p>Delete your account and all synced data. This cannot be undone. Local data on your devices will be preserved.</p>
-    <button id="delete-btn" class="outline" style="--pico-color:var(--pico-color-red-500);--pico-border-color:var(--pico-color-red-500)">Delete Account</button>
+    <button id="delete-btn" class="btn btn-danger">Delete Account</button>
 </div>
 
 <dialog id="confirm-dialog">
-    <article>
+    <div class="modal-body">
         <h3>Are you sure?</h3>
         <p>This will permanently delete your account and all synced data.</p>
-        <footer>
-            <button class="secondary" onclick="document.getElementById('confirm-dialog').close()">Cancel</button>
+        <div class="modal-actions">
+            <button class="btn btn-outline" onclick="document.getElementById('confirm-dialog').close()">Cancel</button>
             <form method="post" action="/account/delete" style="display:inline">
-                <button type="submit" style="--pico-color:var(--pico-color-red-500)">Delete Account</button>
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="btn btn-danger">Delete Account</button>
             </form>
-        </footer>
-    </article>
+        </div>
+    </div>
 </dialog>
 
 <script>
 document.getElementById('delete-btn').addEventListener('click', function() {
     document.getElementById('confirm-dialog').showModal();
 });
+</script>
+{% endblock %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/notyf@3/notyf.min.css">
+{% endblock %}
+
+{% block scripts %}
+{% match flash_kind %}
+{% when Some with (kind) %}
+<div id="flash-data" data-kind="{{ kind }}" data-text="{% match flash_text %}{% when Some with (text) %}{{ text }}{% when None %}{% endmatch %}" style="display:none;"></div>
+{% when None %}
+{% endmatch %}
+<script src="https://cdn.jsdelivr.net/npm/notyf@3/notyf.min.js"></script>
+<script>
+var el = document.getElementById('flash-data');
+if (el && el.dataset.kind) {
+    var notyf = new Notyf({ duration: 3000, position: { x: 'right', y: 'top' } });
+    notyf.open({ type: el.dataset.kind, message: el.dataset.text });
+}
 </script>
 {% endblock %}
