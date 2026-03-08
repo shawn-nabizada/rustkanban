@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}RustKanban — Terminal Kanban Board{% endblock %}
+
+{% block content %}
+<hgroup>
+    <h1>RustKanban</h1>
+    <p>A fast, keyboard-driven kanban board for your terminal</p>
+</hgroup>
+
+<section>
+    <h2>Features</h2>
+    <div class="grid">
+        <article>
+            <h3>Vim-style Navigation</h3>
+            <p>Navigate columns with H/L, tasks with arrow keys. Everything is keyboard-first.</p>
+        </article>
+        <article>
+            <h3>Cross-machine Sync</h3>
+            <p>Log in with GitHub and sync your board across all your devices.</p>
+        </article>
+        <article>
+            <h3>Tags &amp; Search</h3>
+            <p>Organize with tags, filter by tag, search across all tasks.</p>
+        </article>
+    </div>
+</section>
+
+<section>
+    <h2>Install</h2>
+    <pre><code>curl -fsSL https://rustkanban.com/install.sh | sh</code></pre>
+    <p>Or with cargo:</p>
+    <pre><code>cargo install --path crates/rk-client</code></pre>
+</section>
+
+<section>
+    <h2>Sync Setup</h2>
+    <pre><code>rk login</code></pre>
+    <p>Opens your browser for GitHub authentication. Your board syncs automatically on open and close.</p>
+</section>
+{% endblock %}

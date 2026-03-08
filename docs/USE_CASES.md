@@ -143,6 +143,14 @@ Comprehensive reference of every use case in the application, with step-by-step 
   - [25.2 View active tag filter](#252-view-active-tag-filter)
   - [25.3 View selected task indicator](#253-view-selected-task-indicator)
   - [25.4 View help hint](#254-view-help-hint)
+  - [25.5 View sync status](#255-view-sync-status)
+- [26. Sync](#26-sync)
+  - [26.1 First-time sync setup](#261-first-time-sync-setup)
+  - [26.2 Syncing between machines](#262-syncing-between-machines)
+  - [26.3 Working offline](#263-working-offline)
+  - [26.4 Manual sync from TUI](#264-manual-sync-from-tui)
+  - [26.5 Checking sync status](#265-checking-sync-status)
+  - [26.6 Logging out](#266-logging-out)
 
 ---
 
@@ -161,14 +169,16 @@ Comprehensive reference of every use case in the application, with step-by-step 
 **Notes:**
 - The database and its parent directories are created automatically on first launch
 - The theme is loaded from `~/.config/rustkanban/theme.toml` if it exists
+- If logged in, an automatic sync pull is performed on startup
 
 ### 1.2 Quit the application
 
 **Steps:**
 1. From the board view, press `Q`, `q`, or `Esc`
-2. The currently focused column is saved to preferences
-3. Mouse capture is disabled
-4. The terminal is restored to its original state
+2. If logged in, an automatic sync push is performed
+3. The currently focused column is saved to preferences
+4. Mouse capture is disabled
+5. The terminal is restored to its original state
 
 **Notes:**
 - Quit is only available from Board mode. It is not available from modals, search, or other overlays.
@@ -1060,12 +1070,13 @@ Flash messages appear in the status bar after these actions:
 2. All tasks and tags are serialized to JSON and printed to stdout
 3. Redirect to a file: `rk export > backup.json`
 
-**JSON structure:**
+**JSON structure (v2):**
 ```json
 {
-  "version": 1,
+  "version": 2,
   "tasks": [
     {
+      "uuid": "550e8400-e29b-41d4-a716-446655440000",
       "title": "...",
       "description": "...",
       "priority": "High",
@@ -1077,6 +1088,10 @@ Flash messages appear in the status bar after these actions:
   "tags": ["bug", "urgent", "feature"]
 }
 ```
+
+**Notes:**
+- Export now produces v2 format with UUIDs
+- v1 imports (without UUIDs) are still supported and backward compatible
 
 ### 21.2 Import data from a JSON file
 
@@ -1193,3 +1208,71 @@ When a task is selected (K mode), the status bar shows "SELECTED" with a yellow 
 ### 25.4 View help hint
 
 The right side of the status bar always shows "?: help" in cyan/gray.
+
+### 25.5 View sync status
+
+When logged in, the status bar shows the sync state:
+- Green: synced (last sync completed successfully)
+- Yellow: syncing (sync in progress)
+- Red: offline (server unreachable or not logged in)
+
+---
+
+## 26. Sync
+
+### 26.1 First-time sync setup
+
+**Steps:**
+1. Run `rk login`
+2. A browser window opens to the GitHub OAuth page
+3. Authenticate with your GitHub account
+4. The CLI confirms successful login
+5. Credentials are stored at `~/.config/rustkanban/credentials.json`
+
+**Notes:**
+- Sync is purely opt-in. The app works fully offline without an account.
+- Existing local data is preserved and will sync on the next push.
+
+### 26.2 Syncing between machines
+
+**Steps:**
+1. Run `rk login` on both machines
+2. Tasks and tags sync automatically: pull on TUI startup, push on quit
+3. For immediate sync, press `Ctrl+R` from within the TUI
+4. Conflicts are resolved with last-write-wins
+
+**Notes:**
+- The default sync server is `https://sync.rustkanban.com`
+- UUIDs are used to identify tasks and tags across machines
+
+### 26.3 Working offline
+
+**Steps:**
+1. Use the app normally while offline (no network needed)
+2. All changes are saved locally to SQLite
+3. When network is available again, changes sync on the next TUI startup, quit, or `Ctrl+R`
+
+**Notes:**
+- The app never blocks on network failures. Sync errors are shown briefly and do not interrupt workflow.
+
+### 26.4 Manual sync from TUI
+
+**Steps:**
+1. From the board view, press `Ctrl+R`
+2. The status bar shows syncing state (yellow)
+3. After sync completes, the board reloads with any new data from the server
+4. The status bar returns to synced state (green)
+
+### 26.5 Checking sync status
+
+**Steps:**
+1. Run `rk status`
+2. Output shows: device name, sync server URL, last sync time, and login state
+
+### 26.6 Logging out
+
+**Steps:**
+1. Run `rk logout`
+2. Credentials are removed from `~/.config/rustkanban/credentials.json`
+3. Local data is preserved (nothing is deleted)
+4. Sync stops until you log in again

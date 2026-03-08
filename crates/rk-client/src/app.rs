@@ -7,6 +7,17 @@ use crate::model::{Column, Priority, Tag, Task};
 use crate::theme::Theme;
 use crate::undo::{UndoAction, UndoStack};
 
+#[derive(Debug, Clone)]
+pub enum SyncStatus {
+    NotLoggedIn,
+    Idle {
+        last_synced: Option<String>,
+    },
+    Syncing,
+    #[allow(dead_code)]
+    Error(String),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppMode {
     Board,
@@ -23,6 +34,10 @@ pub enum AppMode {
 
 const PREF_SORT_MODE: &str = "sort_mode";
 const PREF_FOCUSED_COLUMN: &str = "focused_column";
+
+const MAX_TITLE_LEN: usize = 500;
+const MAX_DESCRIPTION_LEN: usize = 5000;
+const MAX_TAG_NAME_LEN: usize = 50;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortMode {
@@ -164,12 +179,19 @@ pub struct App {
     pub terminal_width: u16,
     pub terminal_height: u16,
     pub drag_task: Option<(i64, Column)>, // (task_id, from_column)
+    pub sync_status: SyncStatus,
 }
 
 impl App {
     pub fn new(db: Connection, theme: Theme) -> Self {
         let tasks = db::load_tasks(&db).unwrap_or_default();
         let tags = db::load_tags(&db).unwrap_or_default();
+        let creds = crate::auth::load_credentials();
+        // Clean up old soft deletes for non-syncing users (30 days)
+        if creds.is_none() {
+            let _ = db::cleanup_old_soft_deletes(&db, 30);
+        }
+
         App {
             mode: AppMode::Board,
             running: true,
@@ -206,6 +228,13 @@ impl App {
             terminal_width: 0,
             terminal_height: 0,
             drag_task: None,
+            sync_status: if let Some(c) = creds {
+                SyncStatus::Idle {
+                    last_synced: c.last_synced_at,
+                }
+            } else {
+                SyncStatus::NotLoggedIn
+            },
         }
     }
 
@@ -229,6 +258,33 @@ impl App {
 
     pub fn reload_tags(&mut self) {
         self.tags = db::load_tags(&self.db).unwrap_or_default();
+    }
+
+    pub fn do_sync(&mut self) {
+        if !crate::auth::is_logged_in() {
+            return;
+        }
+        self.sync_status = SyncStatus::Syncing;
+        match crate::sync::sync(&self.db) {
+            Ok(synced_at) => {
+                self.reload_tasks();
+                self.reload_tags();
+                self.undo_stack = UndoStack::new();
+                self.sync_status = SyncStatus::Idle {
+                    last_synced: Some(synced_at),
+                };
+                self.set_flash("Synced successfully".to_string());
+            }
+            Err(e) => {
+                self.sync_status = SyncStatus::Error(e.to_string());
+                self.set_flash(e.to_string());
+            }
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn clear_undo_stack(&mut self) {
+        self.undo_stack = UndoStack::new();
     }
 
     pub fn tasks_for_column(&self, col: Column) -> Vec<&Task> {
@@ -309,15 +365,15 @@ impl App {
 
     pub fn move_column_left(&mut self) {
         let idx = self.focused_column.index();
-        if idx > 0 {
-            self.focused_column = Column::from_index(idx - 1).unwrap();
+        if let Some(col) = idx.checked_sub(1).and_then(Column::from_index) {
+            self.focused_column = col;
         }
     }
 
     pub fn move_column_right(&mut self) {
         let idx = self.focused_column.index();
-        if idx < 2 {
-            self.focused_column = Column::from_index(idx + 1).unwrap();
+        if let Some(col) = Column::from_index(idx + 1) {
+            self.focused_column = col;
         }
     }
 
@@ -377,12 +433,9 @@ impl App {
         if let Some(task_id) = self.selected_task_id {
             if let Some(task) = self.find_task(task_id) {
                 let from_col = task.column;
-                let col_idx = from_col.index();
-                if col_idx == 0 {
-                    return;
+                if let Some(to_col) = from_col.index().checked_sub(1).and_then(Column::from_index) {
+                    self.move_task_to_column(task_id, from_col, to_col);
                 }
-                let to_col = Column::from_index(col_idx - 1).unwrap();
-                self.move_task_to_column(task_id, from_col, to_col);
             }
         }
     }
@@ -391,12 +444,9 @@ impl App {
         if let Some(task_id) = self.selected_task_id {
             if let Some(task) = self.find_task(task_id) {
                 let from_col = task.column;
-                let col_idx = from_col.index();
-                if col_idx >= 2 {
-                    return;
+                if let Some(to_col) = Column::from_index(from_col.index() + 1) {
+                    self.move_task_to_column(task_id, from_col, to_col);
                 }
-                let to_col = Column::from_index(col_idx + 1).unwrap();
-                self.move_task_to_column(task_id, from_col, to_col);
             }
         }
     }
@@ -519,13 +569,10 @@ impl App {
         if let Some(task_id) = self.current_task_id() {
             if let Some(task) = self.find_task(task_id).cloned() {
                 self.undo_stack.push(UndoAction::DeleteTask {
+                    task_id,
                     title: task.title.clone(),
-                    description: task.description.clone(),
-                    priority: task.priority,
-                    column: task.column,
-                    due_date: task.due_date,
                 });
-                let _ = db::delete_task(&self.db, task_id);
+                let _ = db::soft_delete_task(&self.db, task_id);
                 self.reload_tasks();
                 self.clamp_cursor(task.column);
                 self.set_flash(format!("Deleted '{}'", task.title));
@@ -582,7 +629,7 @@ impl App {
             .collect();
         let count = done_tasks.len();
         for task in &done_tasks {
-            let _ = db::delete_task(&self.db, task.id);
+            let _ = db::soft_delete_task(&self.db, task.id);
         }
         self.reload_tasks();
         self.clamp_cursor(Column::Done);
@@ -616,18 +663,14 @@ impl App {
                     self.reload_tasks();
                     self.set_flash("Undone: priority change".to_string());
                 }
-                UndoAction::DeleteTask {
-                    title,
-                    description,
-                    priority,
-                    column,
-                    due_date,
-                } => {
-                    let _ =
-                        db::insert_task(&self.db, &title, &description, priority, column, due_date);
+                UndoAction::DeleteTask { task_id, title } => {
+                    let _ = db::undelete_task(&self.db, task_id);
                     self.reload_tasks();
-                    self.focused_column = column;
-                    self.clamp_cursor(column);
+                    if let Some(task) = self.find_task(task_id) {
+                        let col = task.column;
+                        self.focused_column = col;
+                        self.set_cursor_to_task(task_id, col);
+                    }
                     self.set_flash(format!("Undone: delete '{}'", title));
                 }
                 UndoAction::EditTask {
@@ -649,7 +692,7 @@ impl App {
                     self.set_flash("Undone: edit task".to_string());
                 }
                 UndoAction::DuplicateTask { new_id } => {
-                    let _ = db::delete_task(&self.db, new_id);
+                    let _ = db::soft_delete_task(&self.db, new_id);
                     self.reload_tasks();
                     self.clamp_cursor(self.focused_column);
                     self.set_flash("Undone: duplicate task".to_string());
@@ -765,11 +808,17 @@ impl App {
     pub fn modal_insert_char(&mut self, c: char) {
         match self.modal.focused_field {
             ModalField::Title => {
+                if self.modal.title.chars().count() >= MAX_TITLE_LEN {
+                    return;
+                }
                 let pos = self.modal.cursor_pos.min(self.modal.title.len());
                 self.modal.title.insert(pos, c);
                 self.modal.cursor_pos = pos + c.len_utf8();
             }
             ModalField::Description => {
+                if self.modal.description.chars().count() >= MAX_DESCRIPTION_LEN {
+                    return;
+                }
                 let pos = self.modal.cursor_pos.min(self.modal.description.len());
                 self.modal.description.insert(pos, c);
                 self.modal.cursor_pos = pos + c.len_utf8();
@@ -808,7 +857,9 @@ impl App {
     }
 
     pub fn modal_insert_newline(&mut self) {
-        if self.modal.focused_field == ModalField::Description {
+        if self.modal.focused_field == ModalField::Description
+            && self.modal.description.chars().count() < MAX_DESCRIPTION_LEN
+        {
             let pos = self.modal.cursor_pos.min(self.modal.description.len());
             self.modal.description.insert(pos, '\n');
             self.modal.cursor_pos = pos + 1;
@@ -1065,21 +1116,25 @@ impl App {
     }
 
     pub fn tag_delete(&mut self) {
-        if let Some(tag) = self.tags.get(self.tag_cursor) {
-            let _ = db::delete_tag(&self.db, tag.id);
-            // Clear filter if the deleted tag was the active filter
-            if self.filter_tag == Some(tag.id) {
+        if self.tag_cursor < self.tags.len() {
+            let tag = &self.tags[self.tag_cursor];
+            let tag_id = tag.id;
+            if self.filter_tag == Some(tag_id) {
                 self.filter_tag = None;
             }
+            let _ = db::soft_delete_tag(&self.db, tag_id);
             self.reload_tags();
             self.reload_tasks();
-            if self.tag_cursor >= self.tags.len() && self.tag_cursor > 0 {
-                self.tag_cursor -= 1;
+            if self.tag_cursor > 0 && self.tag_cursor >= self.tags.len() {
+                self.tag_cursor = self.tags.len().saturating_sub(1);
             }
         }
     }
 
     pub fn tag_edit_insert_char(&mut self, c: char) {
+        if self.tag_edit_name.chars().count() >= MAX_TAG_NAME_LEN {
+            return;
+        }
         self.tag_edit_name.push(c);
     }
 

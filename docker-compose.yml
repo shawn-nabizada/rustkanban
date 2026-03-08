@@ -1,0 +1,56 @@
+# RustKanban Sync Server
+#
+# Usage:
+#   docker compose up -d
+#
+# Before starting, configure GitHub OAuth credentials. Either:
+#   1. Copy crates/rk-server/.env.example to .env in the project root and fill in values, or
+#   2. Export GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET in your shell.
+#
+# To create a GitHub OAuth app:
+#   - Go to https://github.com/settings/developers -> OAuth Apps -> New
+#   - Set "Authorization callback URL" to http://localhost:3000/auth/callback
+#     (or your SERVER_URL + /auth/callback in production)
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: rustkanban
+      POSTGRES_PASSWORD: rustkanban
+      POSTGRES_DB: rustkanban
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rustkanban"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  server:
+    build:
+      context: .
+      dockerfile: crates/rk-server/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgres://rustkanban:rustkanban@db:5432/rustkanban
+      SERVER_URL: ${SERVER_URL:-http://localhost:3000}
+      SESSION_SECRET: ${SESSION_SECRET:-dev-secret-change-me-in-production}
+      PORT: "3000"
+      # GitHub OAuth -- set these in .env or via environment variables.
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      # Optional: set RUST_LOG for debug output (e.g. "rk_server=debug,info")
+      RUST_LOG: ${RUST_LOG:-info}
+
+volumes:
+  pgdata:

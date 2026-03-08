@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+
+{% block title %}Login Token — RustKanban{% endblock %}
+
+{% block content %}
+<h1>Login Token</h1>
+<p>Copy this token and paste it into your terminal:</p>
+<pre><code>{{ token }}</code></pre>
+<p>Device ID:</p>
+<pre><code>{{ device_id }}</code></pre>
+{% endblock %}

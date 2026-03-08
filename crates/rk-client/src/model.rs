@@ -113,8 +113,10 @@ impl std::str::FromStr for Column {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Task {
     pub id: i64,
+    pub uuid: String,
     pub title: String,
     pub description: String,
     pub priority: Priority,
@@ -123,10 +125,17 @@ pub struct Task {
     pub tags: Vec<String>,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+    pub deleted: bool,
+    pub deleted_at: Option<NaiveDateTime>,
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Tag {
     pub id: i64,
+    pub uuid: String,
     pub name: String,
+    pub updated_at: NaiveDateTime,
+    pub deleted: bool,
+    pub deleted_at: Option<NaiveDateTime>,
 }

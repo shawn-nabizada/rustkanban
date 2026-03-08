@@ -1,0 +1,37 @@
+[package]
+name = "rustkanban"
+version = "0.1.0"
+edition = "2021"
+description = "A Rust terminal (TUI) kanban board with vim-inspired navigation, tags, search, and SQLite persistence"
+license-file = "../../LICENSE"
+keywords = ["kanban", "tui", "terminal", "productivity", "task"]
+categories = ["command-line-utilities"]
+repository = "https://github.com/shawn-nabizada/rustkanban"
+readme = "../../README.md"
+
+[[bin]]
+name = "rk"
+path = "src/main.rs"
+
+[package.metadata.dist]
+dist = true
+
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+rusqlite = { version = "0.32", features = ["bundled"] }
+chrono = "0.4"
+clap = { version = "4.5", features = ["derive"] }
+clap_complete = "4.5"
+dirs = "6.0"
+unicode-width = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+clap_mangen = "0.2"
+uuid = { version = "1", features = ["v4"] }
+open = "5"
+hostname = "0.4"
+urlencoding = "2"
+rk-shared = { path = "../rk-shared" }
+ureq = "3"

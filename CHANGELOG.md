@@ -7,6 +7,19 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- Restructured project as Cargo workspace (rk-client, rk-server, rk-shared)
+- Added cross-machine sync via GitHub OAuth (opt-in)
+- Added `rk login`, `rk logout`, `rk sync`, `rk status` CLI commands
+- Added `Ctrl+R` for in-app sync
+- Added sync status indicator in status bar (green/yellow/red)
+- Added UUIDs to tasks and tags (schema v2, auto-migrated from v1)
+- Export format v2 with UUIDs (v1 import still backward compatible)
+- Added text validation limits (500 char titles, 5000 char descriptions, 50 char tag names)
+
+### Changed
+- Switched to soft deletes internally (no user-facing change)
+
+### Previous (pre-sync)
 - Duplicate task (C key) with proper undo support
 - Mouse support: click to focus/select, scroll wheel, drag tasks between columns
 - Search match highlighting (underline) in task titles

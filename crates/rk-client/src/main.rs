@@ -1,9 +1,11 @@
 mod app;
+mod auth;
 mod db;
 mod event;
 mod export;
 mod handler;
 mod model;
+mod sync;
 mod theme;
 mod ui;
 mod undo;
@@ -46,6 +48,27 @@ enum Commands {
         #[arg(long)]
         init: bool,
     },
+    /// Log in to sync service
+    Login {
+        /// Custom server URL
+        #[arg(long)]
+        server: Option<String>,
+        /// Override device name (default: hostname)
+        #[arg(long)]
+        device_name: Option<String>,
+        /// Manually provide token (skip browser)
+        #[arg(long)]
+        token: Option<String>,
+        /// Manually provide device ID (with --token)
+        #[arg(long)]
+        device_id: Option<String>,
+    },
+    /// Log out from sync service
+    Logout,
+    /// Sync with server (pull + push)
+    Sync,
+    /// Show sync status
+    Status,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -59,6 +82,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             clap_complete::generate(shell, &mut Cli::command(), "rk", &mut io::stdout());
         }
         Some(Commands::Reset) => {
+            if auth::is_logged_in() {
+                println!("Warning: You are logged in to sync. This will only reset local data —");
+                println!("synced tasks will reappear on next sync. To also delete server data,");
+                println!("use your account page.");
+            }
             print!("Delete all tasks and tags? (Y/N) ");
             io::stdout().flush()?;
             let mut input = String::new();
@@ -100,6 +128,61 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 print!("{}", theme::default_theme_toml());
             }
         }
+        Some(Commands::Login {
+            server,
+            device_name,
+            token,
+            device_id,
+        }) => {
+            if let (Some(token), Some(device_id)) = (token, device_id) {
+                let name = device_name.unwrap_or_else(auth::default_device_name);
+                let creds = auth::Credentials {
+                    token,
+                    device_id,
+                    device_name: name,
+                    server_url: server.unwrap_or_else(|| auth::DEFAULT_SERVER.into()),
+                    last_synced_at: None,
+                };
+                auth::save_credentials(&creds)?;
+                println!("Logged in as device '{}'.", creds.device_name);
+            } else {
+                match auth::login(server.as_deref(), device_name.as_deref()) {
+                    Ok(creds) => println!("Logged in as device '{}'.", creds.device_name),
+                    Err(e) => eprintln!("{}", e),
+                }
+            }
+        }
+        Some(Commands::Logout) => {
+            if !auth::is_logged_in() {
+                println!("Not logged in.");
+            } else {
+                // TODO: attempt final push before logout
+                auth::delete_credentials()?;
+                println!("Logged out. Local data preserved.");
+            }
+        }
+        Some(Commands::Status) => {
+            if let Some(creds) = auth::load_credentials() {
+                println!("Logged in as \"{}\"", creds.device_name);
+                println!("Server:      {}", creds.server_url);
+                match &creds.last_synced_at {
+                    Some(ts) => println!("Last synced: {}", ts),
+                    None => println!("Last synced: never"),
+                }
+            } else {
+                println!("Not logged in. Run `rk login` to enable sync.");
+            }
+        }
+        Some(Commands::Sync) => {
+            if !auth::is_logged_in() {
+                eprintln!("Not logged in. Run `rk login` first.");
+            } else {
+                match sync::sync(&conn) {
+                    Ok(synced_at) => println!("Synced at {}", synced_at),
+                    Err(e) => eprintln!("{}", e),
+                }
+            }
+        }
         None => {
             run_tui(conn)?;
         }
@@ -131,6 +214,20 @@ fn run_tui(conn: rusqlite::Connection) -> Result<(), Box<dyn std::error::Error>>
 
     let t = theme::load_theme();
     let mut app = App::new(conn, t);
+
+    // Sync on startup
+    if auth::is_logged_in() {
+        print!("Syncing...");
+        std::io::stdout().flush().ok();
+        match sync::pull(&app.db) {
+            Ok(_) => {
+                app.reload_tasks();
+                app.reload_tags();
+                println!(" done.");
+            }
+            Err(e) => println!(" {}", e),
+        }
+    }
 
     loop {
         let size = terminal.size()?;
@@ -167,5 +264,17 @@ fn run_tui(conn: rusqlite::Connection) -> Result<(), Box<dyn std::error::Error>>
     }
 
     restore_terminal();
+
+    // Sync on quit
+    if auth::is_logged_in() {
+        match sync::push(&app.db) {
+            Ok(_) => {}
+            Err(sync::SyncError::Network(_)) => {
+                eprintln!("Changes saved locally, will sync next time.");
+            }
+            Err(_) => {}
+        }
+    }
+
     Ok(())
 }

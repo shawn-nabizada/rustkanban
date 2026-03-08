@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}RustKanban{% endblock %}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <style>
+        .danger-zone { border: 2px solid var(--pico-color-red-500); padding: 1rem; border-radius: var(--pico-border-radius); margin-top: 2rem; }
+        .danger-zone h3 { color: var(--pico-color-red-500); }
+        .device-stale { opacity: 0.6; }
+        nav .brand { font-weight: bold; font-size: 1.2rem; }
+    </style>
+</head>
+<body>
+    <nav class="container">
+        <ul><li><a href="/" class="brand">RustKanban</a></li></ul>
+        <ul>
+            {% block nav_right %}
+            <li><a href="/login">Login with GitHub</a></li>
+            {% endblock %}
+        </ul>
+    </nav>
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+    <footer class="container">
+        <small>RustKanban — A terminal kanban board</small>
+    </footer>
+</body>
+</html>

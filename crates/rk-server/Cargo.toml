@@ -1,0 +1,32 @@
+[package]
+name = "rk-server"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "rk-server"
+path = "src/main.rs"
+
+[package.metadata.dist]
+dist = false
+
+[dependencies]
+rk-shared = { path = "../rk-shared" }
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "limit"] }
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4", "serde"] }
+dotenvy = "0.15"
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+oauth2 = "5"
+reqwest = { version = "0.12", features = ["json"] }
+rand = "0.8"
+hex = "0.4"
+askama = "0.15"

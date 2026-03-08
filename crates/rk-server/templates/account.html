@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+
+{% block title %}Account — RustKanban{% endblock %}
+
+{% block nav_right %}
+<li><a href="/account">Account</a></li>
+<li><a href="/auth/logout" role="button" class="outline">Logout</a></li>
+{% endblock %}
+
+{% block content %}
+<h1>Account</h1>
+
+<section>
+    <h2>Profile</h2>
+    <p><strong>GitHub:</strong> {{ username }}</p>
+</section>
+
+<section>
+    <h2>Devices</h2>
+    <table>
+        <thead>
+            <tr><th>Name</th><th>Last Synced</th><th>Status</th><th></th></tr>
+        </thead>
+        <tbody>
+            {% for device in devices %}
+            <tr{% if device.stale %} class="device-stale"{% endif %}>
+                <td>{{ device.name }}</td>
+                <td>{% match device.last_synced_at %}{% when Some with (val) %}{{ val }}{% when None %}Never{% endmatch %}</td>
+                <td>{% if device.stale %}Stale{% else %}Active{% endif %}</td>
+                <td>
+                    <form method="post" action="/account/devices/{{ device.id }}/revoke" style="margin:0">
+                        <button type="submit" class="outline secondary" style="padding:0.25rem 0.5rem;font-size:0.875rem">Revoke</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+
+<div class="danger-zone">
+    <h3>Danger Zone</h3>
+    <p>Delete your account and all synced data. This cannot be undone. Local data on your devices will be preserved.</p>
+    <button id="delete-btn" class="outline" style="--pico-color:var(--pico-color-red-500);--pico-border-color:var(--pico-color-red-500)">Delete Account</button>
+</div>
+
+<dialog id="confirm-dialog">
+    <article>
+        <h3>Are you sure?</h3>
+        <p>This will permanently delete your account and all synced data.</p>
+        <footer>
+            <button class="secondary" onclick="document.getElementById('confirm-dialog').close()">Cancel</button>
+            <form method="post" action="/account/delete" style="display:inline">
+                <button type="submit" style="--pico-color:var(--pico-color-red-500)">Delete Account</button>
+            </form>
+        </footer>
+    </article>
+</dialog>
+
+<script>
+document.getElementById('delete-btn').addEventListener('click', function() {
+    document.getElementById('confirm-dialog').showModal();
+});
+</script>
+{% endblock %}

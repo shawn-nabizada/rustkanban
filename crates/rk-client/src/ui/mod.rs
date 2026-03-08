@@ -98,12 +98,44 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     let left = Line::from(spans);
-    let right = Line::from(vec![
-        Span::styled("?", Style::default().fg(Color::Cyan)),
-        Span::styled(": help", Style::default().fg(Color::Gray)),
-    ]);
 
-    let chunks = Layout::horizontal([Constraint::Min(1), Constraint::Length(7)]).split(area);
+    let mut right_spans = Vec::new();
+
+    match &app.sync_status {
+        crate::app::SyncStatus::NotLoggedIn => {}
+        crate::app::SyncStatus::Idle {
+            last_synced: Some(ts),
+        } => {
+            right_spans.push(Span::styled(
+                format!("Synced: {} ", ts),
+                Style::default().fg(Color::Green),
+            ));
+        }
+        crate::app::SyncStatus::Idle { last_synced: None } => {
+            right_spans.push(Span::styled(
+                "Not synced ",
+                Style::default().fg(Color::Gray),
+            ));
+        }
+        crate::app::SyncStatus::Syncing => {
+            right_spans.push(Span::styled(
+                "Syncing... ",
+                Style::default().fg(Color::Yellow),
+            ));
+        }
+        crate::app::SyncStatus::Error(_) => {
+            right_spans.push(Span::styled("Offline ", Style::default().fg(Color::Red)));
+        }
+    }
+
+    right_spans.push(Span::styled("?", Style::default().fg(Color::Cyan)));
+    right_spans.push(Span::styled(": help", Style::default().fg(Color::Gray)));
+
+    let right = Line::from(right_spans);
+
+    let right_width = right.width() as u16;
+    let chunks =
+        Layout::horizontal([Constraint::Min(1), Constraint::Length(right_width)]).split(area);
 
     frame.render_widget(Paragraph::new(left), chunks[0]);
     frame.render_widget(Paragraph::new(right), chunks[1]);

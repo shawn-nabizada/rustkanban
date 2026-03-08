@@ -24,6 +24,11 @@ fn handle_board(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('r') {
+        app.do_sync();
+        return;
+    }
+
     if app.show_help {
         match key.code {
             KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') | KeyCode::Char('Q') => {
@@ -68,7 +73,9 @@ fn handle_selected(app: &mut App, key: KeyEvent) {
 }
 
 fn handle_modal(app: &mut App, key: KeyEvent) {
-    if key.modifiers.contains(KeyModifiers::CONTROL) {
+    let has_save_mod = key.modifiers.contains(KeyModifiers::CONTROL)
+        || key.modifiers.contains(KeyModifiers::SUPER);
+    if has_save_mod {
         match key.code {
             KeyCode::Char('s') | KeyCode::Enter | KeyCode::Char('\n') => {
                 app.save_modal();

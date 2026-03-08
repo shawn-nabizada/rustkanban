@@ -13,11 +13,8 @@ pub enum UndoAction {
         previous: Priority,
     },
     DeleteTask {
+        task_id: i64,
         title: String,
-        description: String,
-        priority: Priority,
-        column: Column,
-        due_date: Option<chrono::NaiveDate>,
     },
     EditTask {
         task_id: i64,

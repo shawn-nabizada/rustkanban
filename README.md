@@ -4,7 +4,7 @@
 [![Crates.io](https://img.shields.io/crates/v/rustkanban)](https://crates.io/crates/rustkanban)
 [![License: BSL-1.1](https://img.shields.io/badge/license-BSL--1.1-blue.svg)](LICENSE)
 
-A Rust terminal (TUI) kanban board with vim-inspired navigation, tags, search, and SQLite persistence.
+A Rust terminal (TUI) kanban board with vim-inspired navigation, tags, search, SQLite persistence, and optional cross-machine sync.
 
 ![Demo](demo.gif)
 
@@ -21,6 +21,7 @@ A Rust terminal (TUI) kanban board with vim-inspired navigation, tags, search, a
 - **Undo** -- undo up to 20 actions (move, edit, delete, priority change)
 - **Export / Import** -- JSON export and import for backup or migration
 - **Theme configuration** -- customizable colors via TOML config file
+- **Cross-machine sync** -- opt-in sync via GitHub OAuth (works fully offline without an account)
 - **Persistent preferences** -- sort mode and focused column remembered across sessions
 - **SQLite persistence** -- data stored at `~/.local/share/rustkanban/kanban.db`
 
@@ -99,6 +100,10 @@ rk theme            # print default theme config
 rk theme --init     # create theme file at ~/.config/rustkanban/theme.toml
 rk completions <sh> # generate shell completions (bash, zsh, fish, powershell)
 rk manpage          # output man page to stdout
+rk login            # authenticate with sync service (GitHub OAuth)
+rk logout           # log out from sync service
+rk sync             # sync with server (pull + push)
+rk status           # show sync status
 ```
 
 ## Keybindings
@@ -121,6 +126,7 @@ rk manpage          # output man page to stdout
 | S | Sort / filter menu |
 | T | Tag management |
 | / | Search |
+| Ctrl+R | Sync with server |
 | Ctrl+Z | Undo |
 | ? | Help |
 | Esc / Q | Quit |
@@ -187,6 +193,21 @@ rk completions fish > ~/.config/fish/completions/rk.fish
 # PowerShell
 rk completions powershell >> $PROFILE
 ```
+
+## Sync
+
+RustKanban supports optional cross-machine sync. Sync is purely opt-in -- the app works fully offline without an account.
+
+```sh
+rk login             # opens browser for GitHub OAuth
+rk sync              # manual sync (pull + push)
+rk status            # show device, server, and last sync time
+rk logout            # log out (local data is preserved)
+```
+
+Once logged in, the TUI automatically pulls on startup and pushes on quit. Press `Ctrl+R` for a manual sync during a session. The status bar shows sync state: green for synced, yellow for syncing, red for offline.
+
+Conflicts are resolved with last-write-wins. Credentials are stored at `~/.config/rustkanban/credentials.json`.
 
 ## License
 
