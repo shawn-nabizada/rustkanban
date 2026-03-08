@@ -122,8 +122,8 @@ jobs:
           sed -i "s/^version = \".*\"/version = \"$VERSION\"/" crates/rk-client/Cargo.toml
           sed -i "s/rk-shared = { version = \".*\"/rk-shared = { version = \"$VERSION\"/" crates/rk-client/Cargo.toml
 
-      - name: Publish rk-shared
-        run: cargo publish --allow-dirty --package rk-shared
+      - name: Publish rustkanban-shared
+        run: cargo publish --allow-dirty --package rustkanban-shared
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 

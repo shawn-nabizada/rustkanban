@@ -2098,7 +2098,7 @@ dependencies = [
  "oauth2",
  "rand 0.8.5",
  "reqwest",
- "rk-shared",
+ "rustkanban-shared",
  "serde",
  "serde_json",
  "sha2",
@@ -2109,14 +2109,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
-]
-
-[[package]]
-name = "rk-shared"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -2204,8 +2196,8 @@ dependencies = [
  "hostname",
  "open",
  "ratatui",
- "rk-shared",
  "rusqlite",
+ "rustkanban-shared",
  "serde",
  "serde_json",
  "toml",
@@ -2213,6 +2205,14 @@ dependencies = [
  "ureq",
  "urlencoding",
  "uuid",
+]
+
+[[package]]
+name = "rustkanban-shared"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

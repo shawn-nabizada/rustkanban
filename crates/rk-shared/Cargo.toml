@@ -1,5 +1,5 @@
 [package]
-name = "rk-shared"
+name = "rustkanban-shared"
 version = "0.1.0"
 edition = "2021"
 description = "Shared types for RustKanban sync protocol"
