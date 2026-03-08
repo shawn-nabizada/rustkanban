@@ -89,8 +89,10 @@ jobs:
           VERSION="${{ needs.prepare.outputs.version }}"
           if [[ "$RUNNER_OS" == "macOS" ]]; then
             sed -i '' "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" Cargo.toml
+            sed -i '' "/^rk-shared/s/version = \"[^\"]*\"/version = \"$VERSION\"/" Cargo.toml
           else
             sed -i "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" Cargo.toml
+            sed -i "/^rk-shared/s/version = \"[^\"]*\"/version = \"$VERSION\"/" Cargo.toml
           fi
 
       - name: Build
