@@ -27,8 +27,8 @@ COPY crates/rk-shared crates/rk-shared
 COPY crates/rk-server crates/rk-server
 COPY crates/rk-client crates/rk-client
 
-# Touch main.rs so cargo detects the change and recompiles.
-RUN touch crates/rk-server/src/main.rs
+# Touch source files so cargo detects the change and recompiles.
+RUN touch crates/rk-shared/src/lib.rs crates/rk-server/src/main.rs
 
 RUN cargo build --release --package rk-server
 
