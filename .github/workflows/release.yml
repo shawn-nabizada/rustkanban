@@ -2,34 +2,46 @@ name: Release
 
 on:
   push:
-    branches:
-      - main
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 0.2.1)'
+        required: true
 
 permissions:
   contents: write
 
 jobs:
-  version:
+  prepare:
     runs-on: ubuntu-latest
     outputs:
-      tag: ${{ steps.bump.outputs.tag }}
-      skipped: ${{ steps.bump.outputs.skipped }}
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Bump version and create tag
-        id: bump
-        uses: anothrNick/github-tag-action@v1
+      - name: Resolve version
+        id: resolve
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create tag (manual dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git tag "v${{ steps.resolve.outputs.version }}"
+          git push origin "v${{ steps.resolve.outputs.version }}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DEFAULT_BUMP: patch
-          WITH_V: true
 
   build:
-    needs: version
-    if: needs.version.outputs.skipped != 'true'
+    needs: prepare
     strategy:
       matrix:
         include:
@@ -60,16 +72,35 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
       - name: Install cross-compiler
         if: matrix.cross
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
 
+      - name: Set version from tag
+        shell: bash
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            sed -i '' "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" Cargo.toml
+          else
+            sed -i "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" Cargo.toml
+          fi
+
       - name: Build
         run: cargo build --release --target ${{ matrix.target }} --package rustkanban
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.cross && 'aarch64-linux-gnu-gcc' || '' }}
+
+      - name: Generate man page
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: ./target/${{ matrix.target }}/release/rk manpage > rk.1
 
       - name: Rename binary (unix)
         if: matrix.os != 'windows-latest'
@@ -79,34 +110,21 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: mv target/${{ matrix.target }}/release/rk.exe ${{ matrix.name }}
 
-      - name: Upload artifact
+      - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
           path: ${{ matrix.name }}
 
-  manpage:
-    needs: version
-    if: needs.version.outputs.skipped != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Generate man page
-        run: cargo run --package rustkanban -- manpage > rk.1
-
       - name: Upload man page
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
         uses: actions/upload-artifact@v4
         with:
           name: rk.1
           path: rk.1
 
   publish:
-    needs: version
-    if: needs.version.outputs.skipped != 'true'
+    needs: prepare
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -116,28 +134,22 @@ jobs:
 
       - name: Update versions
         run: |
-          VERSION="${{ needs.version.outputs.tag }}"
-          VERSION="${VERSION#v}"
-          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" crates/rk-shared/Cargo.toml
-          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" crates/rk-client/Cargo.toml
-          sed -i "s/rk-shared = { version = \".*\"/rk-shared = { version = \"$VERSION\"/" crates/rk-client/Cargo.toml
-          sed -i "s/rk-shared = { version = \".*\"/rk-shared = { version = \"$VERSION\"/" crates/rk-server/Cargo.toml
+          VERSION="${{ needs.prepare.outputs.version }}"
+          sed -i "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" Cargo.toml
+          sed -i "/^rk-shared/s/version = \"[^\"]*\"/version = \"$VERSION\"/" Cargo.toml
 
       - name: Publish rustkanban-shared
         run: cargo publish --allow-dirty --no-verify --package rustkanban-shared
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-      - name: Wait for crates.io index
-        run: sleep 30
-
       - name: Publish rustkanban
-        run: cargo publish --allow-dirty --package rustkanban
+        run: cargo publish --allow-dirty --no-verify --package rustkanban
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   release:
-    needs: [version, build, manpage]
+    needs: [prepare, build]
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
@@ -155,6 +167,6 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.version.outputs.tag }}
+          tag_name: ${{ needs.prepare.outputs.tag }}
           files: artifacts/*
           generate_release_notes: true

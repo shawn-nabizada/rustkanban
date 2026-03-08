@@ -1,7 +1,7 @@
 [package]
 name = "rk-server"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 
 [[bin]]
 name = "rk-server"
@@ -11,7 +11,7 @@ path = "src/main.rs"
 dist = false
 
 [dependencies]
-rk-shared = { version = "0.1.0", path = "../rk-shared", package = "rustkanban-shared" }
+rk-shared.workspace = true
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono"] }

@@ -1,0 +1,26 @@
+name: Deploy Server
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/rk-server/**'
+      - 'crates/rk-shared/**'
+      - 'docker-compose.yml'
+      - 'crates/rk-server/Dockerfile'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to DigitalOcean
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            cd /root/rustkanban
+            git pull origin main
+            docker compose up -d --build --force-recreate server

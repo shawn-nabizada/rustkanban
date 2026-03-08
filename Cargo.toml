@@ -2,6 +2,14 @@
 members = ["crates/rk-client", "crates/rk-shared", "crates/rk-server"]
 resolver = "2"
 
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+repository = "https://github.com/shawn-nabizada/rustkanban"
+
+[workspace.dependencies]
+rk-shared = { version = "0.1.0", path = "crates/rk-shared", package = "rustkanban-shared" }
+
 [workspace.metadata.dist]
 cargo-dist-version = "0.31.0"
 ci = "github"

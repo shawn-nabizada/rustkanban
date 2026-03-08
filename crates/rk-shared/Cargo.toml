@@ -1,10 +1,10 @@
 [package]
 name = "rustkanban-shared"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
 description = "Shared types for RustKanban sync protocol"
 license-file = "../../LICENSE"
-repository = "https://github.com/shawn-nabizada/rustkanban"
 
 [package.metadata.dist]
 dist = false
