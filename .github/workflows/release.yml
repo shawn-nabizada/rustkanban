@@ -114,13 +114,23 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Update Cargo.toml version
+      - name: Update versions
         run: |
           VERSION="${{ needs.version.outputs.tag }}"
           VERSION="${VERSION#v}"
+          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" crates/rk-shared/Cargo.toml
           sed -i "s/^version = \".*\"/version = \"$VERSION\"/" crates/rk-client/Cargo.toml
+          sed -i "s/rk-shared = { version = \".*\"/rk-shared = { version = \"$VERSION\"/" crates/rk-client/Cargo.toml
 
-      - name: Publish to crates.io
+      - name: Publish rk-shared
+        run: cargo publish --allow-dirty --package rk-shared
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Wait for crates.io index
+        run: sleep 30
+
+      - name: Publish rustkanban
         run: cargo publish --allow-dirty --package rustkanban
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

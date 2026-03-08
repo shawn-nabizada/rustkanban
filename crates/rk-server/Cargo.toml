@@ -11,7 +11,7 @@ path = "src/main.rs"
 dist = false
 
 [dependencies]
-rk-shared = { path = "../rk-shared" }
+rk-shared = { version = "0.1.0", path = "../rk-shared" }
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono"] }
