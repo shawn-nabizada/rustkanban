@@ -121,6 +121,7 @@ jobs:
           sed -i "s/^version = \".*\"/version = \"$VERSION\"/" crates/rk-shared/Cargo.toml
           sed -i "s/^version = \".*\"/version = \"$VERSION\"/" crates/rk-client/Cargo.toml
           sed -i "s/rk-shared = { version = \".*\"/rk-shared = { version = \"$VERSION\"/" crates/rk-client/Cargo.toml
+          sed -i "s/rk-shared = { version = \".*\"/rk-shared = { version = \"$VERSION\"/" crates/rk-server/Cargo.toml
 
       - name: Publish rustkanban-shared
         run: cargo publish --allow-dirty --no-verify --package rustkanban-shared
