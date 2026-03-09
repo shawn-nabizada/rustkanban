@@ -1,8 +1,7 @@
-use ratatui::crossterm::event::{
-    KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
-};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 
 use crate::app::{App, AppMode};
+use crate::keybindings::{Action, KeyContext};
 
 pub fn handle_event(app: &mut App, key: KeyEvent) {
     match app.mode {
@@ -17,81 +16,79 @@ pub fn handle_event(app: &mut App, key: KeyEvent) {
         AppMode::SearchFilter => handle_search(app, key),
         AppMode::BoardManagement => handle_board_management(app, key),
         AppMode::BoardDeleteConfirm => handle_board_delete_confirm(app, key),
+        AppMode::Options => handle_options(app, key),
     }
 }
 
 fn handle_board(app: &mut App, key: KeyEvent) {
-    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('r') {
-        app.do_sync();
-        return;
-    }
-
-    if app.show_help {
-        match key.code {
-            KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') | KeyCode::Char('Q') => {
-                app.show_help = false;
-            }
+    // KeyMap dispatch
+    if let Some(action) = app.keymap.action_for(KeyContext::Board, &key) {
+        match action {
+            Action::Quit => app.quit(),
+            Action::NewTask => app.open_new_task_modal(),
+            Action::MoveLeft => app.move_column_left(),
+            Action::MoveRight => app.move_column_right(),
+            Action::MoveUp => app.move_cursor_up(),
+            Action::MoveDown => app.move_cursor_down(),
+            Action::SelectTask => app.select_task(),
+            Action::CyclePriority => app.cycle_priority(),
+            Action::SortMenu => app.open_sort_menu(),
+            Action::EditTask => app.open_edit_task_modal(),
+            Action::DuplicateTask => app.duplicate_task(),
+            Action::DeleteTask => app.open_delete_confirm(),
+            Action::ClearDone => app.open_clear_done_confirm(),
+            Action::ViewDetail => app.open_detail_view(),
+            Action::TagManagement => app.open_tag_management(),
+            Action::Search => app.open_search(),
+            Action::Board1 => app.switch_board_by_index(0),
+            Action::Board2 => app.switch_board_by_index(1),
+            Action::Board3 => app.switch_board_by_index(2),
+            Action::Board4 => app.switch_board_by_index(3),
+            Action::Board5 => app.switch_board_by_index(4),
+            Action::Boards => app.open_board_management(),
+            Action::Sync => app.do_sync(),
+            Action::Options => app.open_options(),
             _ => {}
         }
-        return;
-    }
-
-    match key.code {
-        KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => app.quit(),
-        KeyCode::Char(' ') => app.open_new_task_modal(),
-        KeyCode::Char('j') | KeyCode::Left => app.move_column_left(),
-        KeyCode::Char('l') | KeyCode::Right => app.move_column_right(),
-        KeyCode::Up | KeyCode::BackTab => app.move_cursor_up(),
-        KeyCode::Down | KeyCode::Tab => app.move_cursor_down(),
-        KeyCode::Char('k') | KeyCode::Char('K') => app.select_task(),
-        KeyCode::Char('p') | KeyCode::Char('P') => app.cycle_priority(),
-        KeyCode::Char('s') | KeyCode::Char('S') => app.open_sort_menu(),
-        KeyCode::Char('e') | KeyCode::Char('E') => app.open_edit_task_modal(),
-        KeyCode::Char('c') | KeyCode::Char('C') => app.duplicate_task(),
-        KeyCode::Char('d') => app.open_delete_confirm(),
-        KeyCode::Char('D') => app.open_clear_done_confirm(),
-        KeyCode::Enter => app.open_detail_view(),
-        KeyCode::Char('t') | KeyCode::Char('T') => app.open_tag_management(),
-        KeyCode::Char('/') => app.open_search(),
-        KeyCode::Char('?') => app.toggle_help(),
-        KeyCode::Char('1') => app.switch_board_by_index(0),
-        KeyCode::Char('2') => app.switch_board_by_index(1),
-        KeyCode::Char('3') => app.switch_board_by_index(2),
-        KeyCode::Char('4') => app.switch_board_by_index(3),
-        KeyCode::Char('5') => app.switch_board_by_index(4),
-        KeyCode::Char('b') => app.open_board_management(),
-        _ => {}
     }
 }
 
 fn handle_selected(app: &mut App, key: KeyEvent) {
-    match key.code {
-        KeyCode::Char('k') | KeyCode::Char('K') | KeyCode::Esc => app.deselect_task(),
-        KeyCode::Char('j') | KeyCode::Left => app.move_selected_left(),
-        KeyCode::Char('l') | KeyCode::Right => app.move_selected_right(),
-        KeyCode::Up | KeyCode::BackTab => app.move_cursor_up(),
-        KeyCode::Down | KeyCode::Tab => app.move_cursor_down(),
-        _ => {}
+    if let Some(action) = app.keymap.action_for(KeyContext::Board, &key) {
+        match action {
+            Action::SelectTask | Action::Quit => app.deselect_task(),
+            Action::MoveLeft => app.move_selected_left(),
+            Action::MoveRight => app.move_selected_right(),
+            Action::MoveUp => app.move_cursor_up(),
+            Action::MoveDown => app.move_cursor_down(),
+            _ => {}
+        }
     }
 }
 
 fn handle_modal(app: &mut App, key: KeyEvent) {
-    let has_save_mod = key.modifiers.contains(KeyModifiers::CONTROL)
-        || key.modifiers.contains(KeyModifiers::SUPER);
-    if has_save_mod {
-        match key.code {
-            KeyCode::Char('s') | KeyCode::Enter | KeyCode::Char('\n') => {
+    // Check for configurable modal actions first (save, field navigation)
+    if let Some(action) = app.keymap.action_for(KeyContext::Modal, &key) {
+        match action {
+            Action::Save => {
                 app.save_modal();
+                return;
+            }
+            Action::NextField => {
+                app.modal_next_field();
+                return;
+            }
+            Action::PrevField => {
+                app.modal_prev_field();
                 return;
             }
             _ => {}
         }
     }
 
+    // Text editing keys (hardcoded — not configurable)
     match key.code {
         KeyCode::Esc => app.close_modal(),
-        KeyCode::Tab => app.modal_next_field(),
-        KeyCode::BackTab => app.modal_prev_field(),
         KeyCode::Enter => app.modal_insert_newline(),
         KeyCode::Backspace => app.modal_backspace(),
         KeyCode::Left => app.modal_cursor_left(),
@@ -181,6 +178,8 @@ fn handle_tag_management(app: &mut App, key: KeyEvent) {
             KeyCode::Enter => app.tag_confirm_edit(),
             KeyCode::Esc => app.tag_cancel_edit(),
             KeyCode::Backspace => app.tag_edit_backspace(),
+            KeyCode::Left => app.tag_edit_cursor_left(),
+            KeyCode::Right => app.tag_edit_cursor_right(),
             KeyCode::Char(c) => app.tag_edit_insert_char(c),
             _ => {}
         }
@@ -243,6 +242,58 @@ fn handle_board_delete_confirm(app: &mut App, key: KeyEvent) {
     }
 }
 
+fn handle_options(app: &mut App, key: KeyEvent) {
+    // Rebinding mode: capture the next key
+    if app.options_rebinding {
+        handle_options_rebind(app, key);
+        return;
+    }
+
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => app.close_options(),
+        KeyCode::Tab => app.options_next_tab(),
+        KeyCode::BackTab => app.options_prev_tab(),
+        KeyCode::Up => app.options_cursor_up(),
+        KeyCode::Down => app.options_cursor_down(),
+        KeyCode::Enter => {
+            if app.options_tab == 0 {
+                app.start_rebinding();
+            } else {
+                app.cycle_theme_color();
+            }
+        }
+        KeyCode::Char('r') => {
+            if app.options_tab == 0 {
+                app.reset_selected_binding();
+            } else {
+                app.reset_selected_theme_property();
+            }
+        }
+        KeyCode::Char('R') => {
+            if app.options_tab == 0 {
+                app.reset_all_bindings();
+            } else {
+                app.reset_all_theme_properties();
+            }
+        }
+        _ => {}
+    }
+}
+
+fn handle_options_rebind(app: &mut App, key: KeyEvent) {
+    use ratatui::crossterm::event::KeyModifiers;
+    match key.code {
+        KeyCode::Esc => app.cancel_rebinding(),
+        _ => {
+            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+                app.cancel_rebinding();
+                return;
+            }
+            app.finish_rebinding(key);
+        }
+    }
+}
+
 fn handle_search(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc => app.close_search(),
@@ -277,13 +328,6 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent) {
         _ => return,
     }
 
-    if app.show_help {
-        if matches!(mouse.kind, MouseEventKind::Down(_)) {
-            app.show_help = false;
-        }
-        return;
-    }
-
     // Adjust y coordinate: subtract 1 for the tab bar row
     let board_y = mouse.row.saturating_sub(1);
 
@@ -300,7 +344,13 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent) {
                 }
             }
         }
+        MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Moved => {
+            if app.drag_task.is_some() {
+                app.drag_hover_column = app.column_at_x(mouse.column);
+            }
+        }
         MouseEventKind::Up(MouseButton::Left) => {
+            app.drag_hover_column = None;
             if let Some((task_id, from_col)) = app.drag_task.take() {
                 if let Some(to_col) = app.column_at_x(mouse.column) {
                     if to_col != from_col {

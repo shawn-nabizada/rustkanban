@@ -4,6 +4,7 @@ mod db;
 mod event;
 mod export;
 mod handler;
+mod keybindings;
 mod model;
 mod sync;
 mod theme;
@@ -45,6 +46,12 @@ enum Commands {
     /// Print or initialize theme configuration
     Theme {
         /// Create theme file at default config location
+        #[arg(long)]
+        init: bool,
+    },
+    /// Print or initialize keybinding configuration
+    Keys {
+        /// Create keys file at default config location
         #[arg(long)]
         init: bool,
     },
@@ -132,6 +139,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("Theme written to {}", path.display());
             } else {
                 print!("{}", theme::default_theme_toml());
+            }
+        }
+        Some(Commands::Keys { init }) => {
+            if init {
+                let path = keybindings::keys_path();
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&path, keybindings::default_keys_toml())?;
+                println!("Keybindings written to {}", path.display());
+            } else {
+                print!("{}", keybindings::default_keys_toml());
             }
         }
         Some(Commands::Login {

@@ -71,16 +71,18 @@ Sync is opt-in. The app works fully offline without an account. If logged in, au
 - `event.rs` — `AppEvent` enum (Key | Mouse), crossterm event polling
 
 - `export.rs` — JSON export/import (serde)
-- `theme.rs` — Theme config from ~/.config/rustkanban/theme.toml
+- `keybindings.rs` — Configurable keybinding system (Action enum, KeyMap, TOML config)
+- `theme.rs` — Theme config from ~/.config/rustkanban/theme.toml, color serialization
 - `auth.rs` — Credential management, GitHub OAuth login flow
 - `sync.rs` — Sync client (pull/push/combined via ureq)
 - `update.rs` — Version check (GitHub API, 24h cooldown) and self-update logic
-- `ui/` — All rendering. `mod.rs` is entry point, delegates to submodules (board, modal, detail, sort_menu, tag_screen, search_bar, help_bar, delete_confirm, tab_bar, board_mgmt)
+- `ui/` — All rendering. `mod.rs` is entry point, delegates to submodules (board, modal, detail, sort_menu, tag_screen, search_bar, help_bar, delete_confirm, tab_bar, board_mgmt, options)
 - `crates/rk-server/static/` — Static assets (CSS) served by Axum
 - `crates/rk-server/templates/` — Askama HTML templates
 
 ### Key Patterns
-- **State machine**: `AppMode` enum drives which handler + UI overlay is active
+- **State machine**: `AppMode` enum (Board, Selected, NewTask, EditTask, DetailView, SortMenu, DeleteConfirm, ClearDoneConfirm, TagManagement, SearchFilter, BoardManagement, BoardDeleteConfirm, Options) drives which handler + UI overlay is active
+- **Keybindings**: `app.keymap` maps keys to `Action` enums. `handle_board()` and `handle_modal()` use `keymap.action_for()` instead of hardcoded key matches. Config at `~/.config/rustkanban/keys.toml`
 - **DB-first**: mutate DB, call `reload_tasks()`, never cache separately
 - **Theme**: `app.theme` has all colors. Use `app.theme.priority_color(&p)` not hardcoded colors
 - **Tests**: use `db::init_db_memory()` for in-memory SQLite
@@ -95,6 +97,7 @@ Sync is opt-in. The app works fully offline without an account. If logged in, au
 ### Key Data Paths
 - Database: `~/.local/share/rustkanban/kanban.db`
 - Theme: `~/.config/rustkanban/theme.toml`
+- Keybindings: `~/.config/rustkanban/keys.toml`
 - Preferences: `preferences` table in the SQLite database (key-value)
 - Credentials: `~/.config/rustkanban/credentials.json`
 - Default sync server: `https://sync.rustkanban.com`

@@ -2,8 +2,8 @@ pub mod board;
 pub mod board_mgmt;
 pub mod delete_confirm;
 pub mod detail;
-pub mod help_bar;
 pub mod modal;
+pub mod options;
 pub mod search_bar;
 pub mod sort_menu;
 pub mod tab_bar;
@@ -64,12 +64,10 @@ pub fn render(frame: &mut Frame, app: &App) {
         AppMode::TagManagement => tag_screen::render(frame, app),
         AppMode::BoardManagement => board_mgmt::render(frame, app),
         AppMode::BoardDeleteConfirm => board_mgmt::render_delete_confirm(frame, app),
+        AppMode::Options => options::render(frame, app),
         _ => {}
     }
 
-    if app.show_help {
-        help_bar::render(frame, app);
-    }
 }
 
 fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
@@ -149,8 +147,8 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         }
     }
 
-    right_spans.push(Span::styled("?", Style::default().fg(Color::Cyan)));
-    right_spans.push(Span::styled(": help", Style::default().fg(Color::Gray)));
+    right_spans.push(Span::styled("o", Style::default().fg(Color::Cyan)));
+    right_spans.push(Span::styled(": options", Style::default().fg(Color::Gray)));
 
     let right = Line::from(right_spans);
 

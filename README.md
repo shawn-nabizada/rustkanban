@@ -20,7 +20,8 @@ A Rust terminal (TUI) kanban board with vim-inspired navigation, tags, search, S
 - **Due date warnings** -- color-coded urgency (red for overdue, yellow for soon)
 
 - **Export / Import** -- JSON export and import for backup or migration
-- **Theme configuration** -- customizable colors via TOML config file
+- **Configurable keybindings** -- remap keys via in-app Options modal or `~/.config/rustkanban/keys.toml`
+- **Theme configuration** -- customizable colors via in-app Options modal or `~/.config/rustkanban/theme.toml`
 - **Cross-machine sync** -- opt-in sync via GitHub OAuth (works fully offline without an account)
 - **Persistent preferences** -- sort mode and focused column remembered across sessions
 - **SQLite persistence** -- data stored at `~/.local/share/rustkanban/kanban.db`
@@ -98,6 +99,8 @@ rk export           # export tasks and tags to JSON (stdout)
 rk import <file>    # import tasks and tags from a JSON file
 rk theme            # print default theme config
 rk theme --init     # create theme file at ~/.config/rustkanban/theme.toml
+rk keys             # print default keybinding config
+rk keys --init      # create keys file at ~/.config/rustkanban/keys.toml
 rk completions <sh> # generate shell completions (bash, zsh, fish, powershell)
 rk manpage          # output man page to stdout
 rk login            # authenticate with sync service (GitHub OAuth)
@@ -127,6 +130,7 @@ rk update           # update to the latest version
 | S | Sort / filter menu |
 | T | Tag management |
 | / | Search |
+| O | Options (keybindings + theme) |
 | Ctrl+R | Sync with server |
 
 | ? | Help |

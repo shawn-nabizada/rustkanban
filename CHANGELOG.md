@@ -7,6 +7,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- Options modal (O key): in-app keybinding customization and theme color editing with two tabs, live preview, and config file persistence
+- Configurable keybindings via ~/.config/rustkanban/keys.toml with `rk keys` CLI command
+- In-app theme color editing with preset cycling and live preview
 - Multiple boards: up to 5 named boards per user with tab bar (1-5 to switch), board management overlay (B key), full sync support, and export/import
 - Restructured project as Cargo workspace (rk-client, rk-server, rk-shared)
 - Added cross-machine sync via GitHub OAuth (opt-in)

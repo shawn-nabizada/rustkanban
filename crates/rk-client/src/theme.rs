@@ -226,6 +226,146 @@ mod tests {
             Color::Green
         );
     }
+
+    #[test]
+    fn test_color_to_string_named() {
+        assert_eq!(color_to_string(Color::Red), "Red");
+        assert_eq!(color_to_string(Color::Cyan), "Cyan");
+    }
+
+    #[test]
+    fn test_color_to_string_rgb() {
+        assert_eq!(color_to_string(Color::Rgb(255, 0, 128)), "#FF0080");
+    }
+
+    #[test]
+    fn test_next_preset_color() {
+        // Red -> Green (next in list)
+        assert_eq!(next_preset_color(Color::Red), Color::Green);
+        // Black (last) -> Red (wraps to first)
+        assert_eq!(next_preset_color(Color::Black), Color::Red);
+        // Unknown color -> Red (first preset)
+        assert_eq!(next_preset_color(Color::Rgb(1, 2, 3)), Color::Red);
+    }
+
+    #[test]
+    fn test_serialize_theme_roundtrip() {
+        let theme = Theme::default();
+        let toml_str = serialize_theme(&theme);
+        assert!(toml_str.contains("focused_border = \"Green\""));
+        assert!(toml_str.contains("high = \"Red\""));
+    }
+}
+
+pub fn color_to_string(color: Color) -> String {
+    match color {
+        Color::Black => "Black".to_string(),
+        Color::Red => "Red".to_string(),
+        Color::Green => "Green".to_string(),
+        Color::Yellow => "Yellow".to_string(),
+        Color::Blue => "Blue".to_string(),
+        Color::Magenta => "Magenta".to_string(),
+        Color::Cyan => "Cyan".to_string(),
+        Color::Gray => "Gray".to_string(),
+        Color::DarkGray => "DarkGray".to_string(),
+        Color::LightRed => "LightRed".to_string(),
+        Color::LightGreen => "LightGreen".to_string(),
+        Color::LightYellow => "LightYellow".to_string(),
+        Color::LightBlue => "LightBlue".to_string(),
+        Color::LightMagenta => "LightMagenta".to_string(),
+        Color::LightCyan => "LightCyan".to_string(),
+        Color::White => "White".to_string(),
+        Color::Rgb(r, g, b) => format!("#{:02X}{:02X}{:02X}", r, g, b),
+        _ => "Unknown".to_string(),
+    }
+}
+
+pub const PRESET_COLORS: &[(&str, Color)] = &[
+    ("Red", Color::Red),
+    ("Green", Color::Green),
+    ("Yellow", Color::Yellow),
+    ("Blue", Color::Blue),
+    ("Magenta", Color::Magenta),
+    ("Cyan", Color::Cyan),
+    ("White", Color::White),
+    ("Gray", Color::Gray),
+    ("DarkGray", Color::DarkGray),
+    ("LightRed", Color::LightRed),
+    ("LightGreen", Color::LightGreen),
+    ("LightYellow", Color::LightYellow),
+    ("LightBlue", Color::LightBlue),
+    ("LightMagenta", Color::LightMagenta),
+    ("LightCyan", Color::LightCyan),
+    ("Black", Color::Black),
+];
+
+pub fn next_preset_color(current: Color) -> Color {
+    let pos = PRESET_COLORS.iter().position(|(_, c)| *c == current);
+    match pos {
+        Some(i) => PRESET_COLORS[(i + 1) % PRESET_COLORS.len()].1,
+        None => PRESET_COLORS[0].1,
+    }
+}
+
+pub fn save_theme(theme: &Theme) {
+    let content = serialize_theme(theme);
+    let path = theme_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&path, content);
+}
+
+pub fn serialize_theme(theme: &Theme) -> String {
+    format!(
+        r##"# RustKanban Theme Configuration
+# Colors: Black, Red, Green, Yellow, Blue, Magenta, Cyan, Gray,
+#         DarkGray, LightRed, LightGreen, LightYellow, LightBlue,
+#         LightMagenta, LightCyan, White, or hex "#RRGGBB"
+
+[board]
+focused_border = "{}"
+unfocused_border = "{}"
+cursor = "{}"
+selected = "{}"
+title = "{}"
+
+[priority]
+high = "{}"
+medium = "{}"
+low = "{}"
+
+[tags]
+color = "{}"
+
+[due_date]
+overdue = "{}"
+today = "{}"
+soon = "{}"
+far = "{}"
+
+[modal]
+border = "{}"
+focused = "{}"
+error = "{}"
+"##,
+        color_to_string(theme.focused_border),
+        color_to_string(theme.unfocused_border),
+        color_to_string(theme.cursor),
+        color_to_string(theme.selected),
+        color_to_string(theme.title),
+        color_to_string(theme.priority_high),
+        color_to_string(theme.priority_medium),
+        color_to_string(theme.priority_low),
+        color_to_string(theme.tag),
+        color_to_string(theme.due_overdue),
+        color_to_string(theme.due_today),
+        color_to_string(theme.due_soon),
+        color_to_string(theme.due_far),
+        color_to_string(theme.modal_border),
+        color_to_string(theme.modal_focused),
+        color_to_string(theme.error),
+    )
 }
 
 pub fn default_theme_toml() -> &'static str {

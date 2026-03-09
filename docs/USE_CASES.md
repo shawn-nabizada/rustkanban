@@ -144,6 +144,16 @@ Comprehensive reference of every use case in the application, with step-by-step 
   - [26.4 Manual sync from TUI](#264-manual-sync-from-tui)
   - [26.5 Checking sync status](#265-checking-sync-status)
   - [26.6 Logging out](#266-logging-out)
+- [27. Options Modal](#27-options-modal)
+  - [27.1 Open the Options modal](#271-open-the-options-modal)
+  - [27.2 Switch between tabs](#272-switch-between-tabs)
+  - [27.3 Rebind a key](#273-rebind-a-key)
+  - [27.4 Reset a keybinding to default](#274-reset-a-keybinding-to-default)
+  - [27.5 Reset all keybindings](#275-reset-all-keybindings)
+  - [27.6 Cycle a theme color](#276-cycle-a-theme-color)
+  - [27.7 Reset a theme color to default](#277-reset-a-theme-color-to-default)
+  - [27.8 Reset all theme colors](#278-reset-all-theme-colors)
+  - [27.9 Initialize keybinding config from CLI](#279-initialize-keybinding-config-from-cli)
 
 ---
 
@@ -1206,3 +1216,74 @@ When logged in, the status bar shows the sync state:
 2. Credentials are removed from `~/.config/rustkanban/credentials.json`
 3. Local data is preserved (nothing is deleted)
 4. Sync stops until you log in again
+
+---
+
+## 27. Options Modal
+
+### 27.1 Open the Options modal
+
+**Steps:**
+1. From the board view, press `O`
+2. A full-screen overlay appears with two tabs: Keybindings and Theme
+3. The Keybindings tab is selected by default
+
+### 27.2 Switch between tabs
+
+**Steps:**
+1. In the Options modal, press `Tab` to switch to the next tab
+2. Press `Shift+Tab` to switch to the previous tab
+3. The active tab is highlighted in the tab bar
+
+### 27.3 Rebind a key
+
+**Steps:**
+1. Open the Options modal (`O`)
+2. Use `Up`/`Down` to navigate to the action you want to rebind
+3. Press `Enter` — the entry shows "[Press a key...]"
+4. Press the new key you want to assign
+5. The binding updates immediately and is saved to `~/.config/rustkanban/keys.toml`
+
+**Notes:**
+- `Esc` and `Ctrl+C` cancel the rebind operation (they are reserved keys)
+- Rebinding replaces all alternate keys for that action with the single new key
+
+### 27.4 Reset a keybinding to default
+
+**Steps:**
+1. Navigate to the binding you want to reset
+2. Press `r` — the binding reverts to its default key(s)
+
+### 27.5 Reset all keybindings
+
+**Steps:**
+1. Press `R` (Shift+R) in the Keybindings tab
+2. All bindings revert to their defaults
+
+### 27.6 Cycle a theme color
+
+**Steps:**
+1. Open the Options modal (`O`), switch to the Theme tab (`Tab`)
+2. Use `Up`/`Down` to navigate to the color property
+3. Press `Enter` — the color cycles to the next preset (Red, Green, Yellow, Blue, Magenta, Cyan, etc.)
+4. Changes apply immediately and are saved to `~/.config/rustkanban/theme.toml`
+
+### 27.7 Reset a theme color to default
+
+**Steps:**
+1. Navigate to the color property you want to reset
+2. Press `r` — the color reverts to its default
+
+### 27.8 Reset all theme colors
+
+**Steps:**
+1. Press `R` (Shift+R) in the Theme tab
+2. All colors revert to their defaults
+
+### 27.9 Initialize keybinding config from CLI
+
+**Steps:**
+1. Run `rk keys --init`
+2. A default `keys.toml` file is created at `~/.config/rustkanban/keys.toml`
+3. Edit this file to customize keybindings outside the TUI
+4. Run `rk keys` to print the default config to stdout

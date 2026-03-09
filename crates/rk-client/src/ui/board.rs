@@ -46,10 +46,6 @@ fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect, today: c
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    if tasks.is_empty() {
-        return;
-    }
-
     let avail_width = inner.width as usize;
     let prefix_len = 6;
     let title_width = avail_width.saturating_sub(prefix_len).max(1);
@@ -156,6 +152,47 @@ fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect, today: c
             ),
         };
         all_lines.push(Line::from(Span::styled(due_text, due_style)));
+    }
+
+    // Drop target skeleton: show at bottom of column when dragging a task here
+    if let Some((task_id, from_col)) = app.drag_task {
+        if app.drag_hover_column == Some(col) && from_col != col {
+            // Find the dragged task to get its title
+            let drag_title = app
+                .tasks_for_column(from_col)
+                .iter()
+                .find(|t| t.id == task_id)
+                .map(|t| t.title.clone());
+            if let Some(title) = drag_title {
+                let skeleton_style = Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::DIM);
+                let border = "─".repeat(avail_width.saturating_sub(2));
+                all_lines.push(Line::from(Span::styled(
+                    format!("┌{}┐", border),
+                    skeleton_style,
+                )));
+                let truncated = if title.len() > avail_width.saturating_sub(4) {
+                    format!(
+                        "{}…",
+                        &title[..char_boundary_at(&title, avail_width.saturating_sub(5))]
+                    )
+                } else {
+                    title
+                };
+                let padded = format!(
+                    "│ {:<width$} │",
+                    truncated,
+                    width = avail_width.saturating_sub(4)
+                );
+                all_lines.push(Line::from(Span::styled(padded, skeleton_style)));
+                let border = "─".repeat(avail_width.saturating_sub(2));
+                all_lines.push(Line::from(Span::styled(
+                    format!("└{}┘", border),
+                    skeleton_style,
+                )));
+            }
+        }
     }
 
     // Scrolling: ensure cursor is visible

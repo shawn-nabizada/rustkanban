@@ -16,6 +16,8 @@ pub fn poll_event(timeout: Duration) -> std::io::Result<Option<AppEvent>> {
             Event::Mouse(mouse) => match mouse.kind {
                 MouseEventKind::Down(_)
                 | MouseEventKind::Up(_)
+                | MouseEventKind::Drag(_)
+                | MouseEventKind::Moved
                 | MouseEventKind::ScrollDown
                 | MouseEventKind::ScrollUp => {
                     return Ok(Some(AppEvent::Mouse(mouse)));
