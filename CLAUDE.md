@@ -33,7 +33,7 @@ All common tasks are available via [just](https://github.com/casey/just):
 
 ## CLI Subcommands
 - `rk` — launch TUI
-- `rk reset` — delete all tasks and tags (prompts Y/N)
+- `rk reset` — delete all tasks, tags, and boards (prompts Y/N, recreates Personal board)
 - `rk export` — JSON to stdout
 - `rk import <file>` — import from JSON file
 - `rk theme` — print default theme TOML
@@ -66,7 +66,7 @@ Sync is opt-in. The app works fully offline without an account. If logged in, au
 - `main.rs` — CLI (clap), terminal setup, event loop, panic-safe restore
 - `app.rs` — App state struct, all business logic methods
 - `db.rs` — SQLite CRUD (rusqlite), preferences table. All mutations go through DB first, then `reload_tasks()`
-- `model.rs` — Task, Tag, Priority, Column types
+- `model.rs` — Task, Tag, Board, Priority, Column types
 - `handler.rs` — Input dispatch: matches AppMode, delegates to App methods. Includes `handle_mouse()`
 - `event.rs` — `AppEvent` enum (Key | Mouse), crossterm event polling
 
@@ -75,7 +75,7 @@ Sync is opt-in. The app works fully offline without an account. If logged in, au
 - `auth.rs` — Credential management, GitHub OAuth login flow
 - `sync.rs` — Sync client (pull/push/combined via ureq)
 - `update.rs` — Version check (GitHub API, 24h cooldown) and self-update logic
-- `ui/` — All rendering. `mod.rs` is entry point, delegates to submodules (board, modal, detail, sort_menu, tag_screen, search_bar, help_bar, delete_confirm)
+- `ui/` — All rendering. `mod.rs` is entry point, delegates to submodules (board, modal, detail, sort_menu, tag_screen, search_bar, help_bar, delete_confirm, tab_bar, board_mgmt)
 - `crates/rk-server/static/` — Static assets (CSS) served by Axum
 - `crates/rk-server/templates/` — Askama HTML templates
 
@@ -89,7 +89,8 @@ Sync is opt-in. The app works fully offline without an account. If logged in, au
 - **Task height**: use `task_visual_height()` — shared by scroll calculation and mouse hit detection
 - **Search highlight**: `highlight_matches()` uses char-level byte-offset mapping for Unicode safety
 - **Soft deletes**: `soft_delete_task()`/`soft_delete_tag()` set `deleted=1`, `load_tasks()`/`load_tags()` filter them out. `load_all_tasks()`/`load_all_tags()` include deleted.
-- **UUIDs**: All tasks and tags have UUIDs (v4). Used for sync identity and export dedup.
+- **UUIDs**: All tasks, tags, and boards have UUIDs (v4). Used for sync identity and export dedup.
+- **Boards**: Up to 5 named boards per user. Tasks belong to a board via `board_id`. Tags are global (shared across boards). Tab bar at top, `B` key for management, `1-5` to switch.
 
 ### Key Data Paths
 - Database: `~/.local/share/rustkanban/kanban.db`
@@ -111,7 +112,7 @@ Sync is opt-in. The app works fully offline without an account. If logged in, au
 - `cargo clippy` and `cargo fmt --check` must pass before commit
 
 ## Gotchas
-- New tasks always go to **Todo** column regardless of which column is focused
+- New tasks go to **active board's Todo** column regardless of which column is focused
 - In modal: `Enter` = newline in description field, `Ctrl+S` = save (not Enter)
 
 - **Tag deletion** soft-deletes the tag and silently removes it from all tasks
@@ -120,7 +121,7 @@ Sync is opt-in. The app works fully offline without an account. If logged in, au
 - Mouse drag deselects the task after moving (returns to Board mode)
 - `Ctrl+R` triggers manual sync (pull + push) from within the TUI
 - Auto-pull on TUI startup, auto-push on quit (if logged in)
-- Schema auto-migrates v1 to v2 on first run after upgrade (backfills UUIDs)
+- Schema auto-migrates v1→v2 (backfills UUIDs) and v2→v3 (adds boards table, backfills tasks into "Personal" board)
 - Text validation limits: 500 chars for title, 5000 chars for description, 50 chars for tag name
 - Last-write-wins conflict resolution for sync
 

@@ -276,7 +276,7 @@ pub async fn export_data(session: Session, Extension(pool): Extension<PgPool>) -
         None => return Redirect::temporary("/login").into_response(),
     };
 
-    let (task_result, tag_result) = tokio::join!(
+    let (task_result, tag_result, board_result) = tokio::join!(
         sqlx::query_as::<
             _,
             (
@@ -304,6 +304,11 @@ pub async fn export_data(session: Session, Extension(pool): Extension<PgPool>) -
         )
         .bind(user_id)
         .fetch_all(&pool),
+        sqlx::query_as::<_, (Uuid, String, i32)>(
+            "SELECT uuid, name, position FROM boards WHERE user_id = $1 AND deleted = FALSE ORDER BY position",
+        )
+        .bind(user_id)
+        .fetch_all(&pool),
     );
 
     let tasks = match task_result {
@@ -319,6 +324,15 @@ pub async fn export_data(session: Session, Extension(pool): Extension<PgPool>) -
         Ok(rows) => rows,
         Err(e) => {
             tracing::error!("Export tags query failed: {e}");
+            set_flash(&session, "error", "Export failed").await;
+            return Redirect::to("/account").into_response();
+        }
+    };
+
+    let board_rows = match board_result {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::error!("Export boards query failed: {e}");
             set_flash(&session, "error", "Export failed").await;
             return Redirect::to("/account").into_response();
         }
@@ -341,6 +355,13 @@ pub async fn export_data(session: Session, Extension(pool): Extension<PgPool>) -
             serde_json::json!({
                 "uuid": t.0.to_string(),
                 "name": t.1,
+            })
+        }).collect::<Vec<_>>(),
+        "boards": board_rows.iter().map(|b| {
+            serde_json::json!({
+                "uuid": b.0.to_string(),
+                "name": b.1,
+                "position": b.2,
             })
         }).collect::<Vec<_>>(),
     });

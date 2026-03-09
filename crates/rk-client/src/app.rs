@@ -3,7 +3,7 @@ use std::time::Instant;
 use rusqlite::Connection;
 
 use crate::db;
-use crate::model::{Column, Priority, Tag, Task};
+use crate::model::{Board, Column, Priority, Tag, Task};
 use crate::theme::Theme;
 
 #[derive(Debug, Clone)]
@@ -29,14 +29,18 @@ pub enum AppMode {
     ClearDoneConfirm,
     TagManagement,
     SearchFilter,
+    BoardManagement,
+    BoardDeleteConfirm,
 }
 
 const PREF_SORT_MODE: &str = "sort_mode";
 const PREF_FOCUSED_COLUMN: &str = "focused_column";
+const PREF_ACTIVE_BOARD: &str = "active_board";
 
 const MAX_TITLE_LEN: usize = 500;
 const MAX_DESCRIPTION_LEN: usize = 5000;
 const MAX_TAG_NAME_LEN: usize = 50;
+const MAX_BOARD_NAME_LEN: usize = 50;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortMode {
@@ -178,6 +182,15 @@ pub struct App {
     pub terminal_width: u16,
     pub terminal_height: u16,
     pub drag_task: Option<(i64, Column)>, // (task_id, from_column)
+    // Boards
+    pub boards: Vec<Board>,
+    pub active_board_uuid: String,
+    pub board_states: std::collections::HashMap<String, ([usize; 3], [usize; 3])>, // uuid → (cursor_positions, scroll_offsets)
+    // Board management
+    pub board_cursor: usize,
+    pub board_edit_name: String,
+    pub board_editing: bool,  // true when renaming inline
+    pub board_creating: bool, // true when creating new board
     pub sync_status: SyncStatus,
     pub available_update: Option<String>,
 }
@@ -191,6 +204,11 @@ impl App {
         if creds.is_none() {
             let _ = db::cleanup_old_soft_deletes(&db, 30);
         }
+
+        let boards = db::load_boards(&db).unwrap_or_default();
+        let active_board_uuid = db::get_preference(&db, PREF_ACTIVE_BOARD)
+            .filter(|uuid| boards.iter().any(|b| b.uuid == *uuid))
+            .unwrap_or_else(|| boards.first().map(|b| b.uuid.clone()).unwrap_or_default());
 
         App {
             mode: AppMode::Board,
@@ -228,6 +246,13 @@ impl App {
             terminal_width: 0,
             terminal_height: 0,
             drag_task: None,
+            boards,
+            active_board_uuid,
+            board_states: std::collections::HashMap::new(),
+            board_cursor: 0,
+            board_edit_name: String::new(),
+            board_editing: false,
+            board_creating: false,
             available_update: None,
             sync_status: if let Some(c) = creds {
                 SyncStatus::Idle {
@@ -261,6 +286,61 @@ impl App {
         self.tags = db::load_tags(&self.db).unwrap_or_default();
     }
 
+    pub fn reload_boards(&mut self) {
+        self.boards = db::load_boards(&self.db).unwrap_or_default();
+        if !self.boards.iter().any(|b| b.uuid == self.active_board_uuid) {
+            if let Some(first) = self.boards.first() {
+                self.active_board_uuid = first.uuid.clone();
+                let _ = db::set_preference(&self.db, PREF_ACTIVE_BOARD, &self.active_board_uuid);
+            }
+        }
+    }
+
+    pub fn switch_board(&mut self, board_uuid: &str) {
+        if board_uuid == self.active_board_uuid {
+            return;
+        }
+        if !self.boards.iter().any(|b| b.uuid == board_uuid) {
+            return;
+        }
+        // Save current board's cursor/scroll state
+        self.board_states.insert(
+            self.active_board_uuid.clone(),
+            (self.cursor_positions, self.scroll_offsets),
+        );
+        // Switch
+        self.active_board_uuid = board_uuid.to_string();
+        let _ = db::set_preference(&self.db, PREF_ACTIVE_BOARD, board_uuid);
+        // Restore or reset
+        if let Some((cursors, scrolls)) = self.board_states.get(board_uuid) {
+            self.cursor_positions = *cursors;
+            self.scroll_offsets = *scrolls;
+        } else {
+            self.cursor_positions = [0; 3];
+            self.scroll_offsets = [0; 3];
+        }
+        // Clear search when switching
+        self.search_query.clear();
+        self.search_active = false;
+        self.filter_tag = None;
+    }
+
+    pub fn switch_board_by_index(&mut self, index: usize) {
+        if let Some(board) = self.boards.get(index) {
+            let uuid = board.uuid.clone();
+            self.switch_board(&uuid);
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn active_board_name(&self) -> &str {
+        self.boards
+            .iter()
+            .find(|b| b.uuid == self.active_board_uuid)
+            .map(|b| b.name.as_str())
+            .unwrap_or("Board")
+    }
+
     pub fn do_sync(&mut self) {
         if !crate::auth::is_logged_in() {
             return;
@@ -270,6 +350,7 @@ impl App {
             Ok(synced_at) => {
                 self.reload_tasks();
                 self.reload_tags();
+                self.reload_boards();
 
                 self.sync_status = SyncStatus::Idle {
                     last_synced: Some(synced_at),
@@ -284,7 +365,11 @@ impl App {
     }
 
     pub fn tasks_for_column(&self, col: Column) -> Vec<&Task> {
-        let mut tasks: Vec<&Task> = self.tasks.iter().filter(|t| t.column == col).collect();
+        let mut tasks: Vec<&Task> = self
+            .tasks
+            .iter()
+            .filter(|t| t.column == col && t.board_id == self.active_board_uuid)
+            .collect();
 
         // Apply search filter
         if self.search_active && !self.search_query.is_empty() {
@@ -578,6 +663,7 @@ impl App {
                     task.priority,
                     task.column,
                     task.due_date,
+                    &self.active_board_uuid,
                 ) {
                     if !tag_ids.is_empty() {
                         let _ = db::set_task_tags(&self.db, new_id, &tag_ids);
@@ -608,7 +694,7 @@ impl App {
         let done_tasks: Vec<_> = self
             .tasks
             .iter()
-            .filter(|t| t.column == Column::Done)
+            .filter(|t| t.column == Column::Done && t.board_id == self.active_board_uuid)
             .cloned()
             .collect();
         let count = done_tasks.len();
@@ -658,6 +744,7 @@ impl App {
                     self.modal.priority,
                     Column::Todo,
                     due_date,
+                    &self.active_board_uuid,
                 ) {
                     let _ = db::set_task_tags(&self.db, new_id, &self.modal_tag_ids);
                 }
@@ -1133,6 +1220,135 @@ impl App {
             self.clamp_cursor(col);
         }
         self.mode = AppMode::Board;
+    }
+
+    // Board management
+
+    pub fn open_board_management(&mut self) {
+        self.board_cursor = self
+            .boards
+            .iter()
+            .position(|b| b.uuid == self.active_board_uuid)
+            .unwrap_or(0);
+        self.board_editing = false;
+        self.board_creating = false;
+        self.board_edit_name.clear();
+        self.mode = AppMode::BoardManagement;
+    }
+
+    pub fn close_board_management(&mut self) {
+        self.board_editing = false;
+        self.board_creating = false;
+        self.mode = AppMode::Board;
+    }
+
+    pub fn board_mgmt_cursor_up(&mut self) {
+        if self.board_cursor > 0 {
+            self.board_cursor -= 1;
+        }
+    }
+
+    pub fn board_mgmt_cursor_down(&mut self) {
+        let max = if self.board_creating {
+            self.boards.len()
+        } else {
+            self.boards.len().saturating_sub(1)
+        };
+        if self.board_cursor < max {
+            self.board_cursor += 1;
+        }
+    }
+
+    pub fn start_board_create(&mut self) {
+        if db::board_count(&self.db).unwrap_or(0) >= 5 {
+            self.set_flash("Maximum of 5 boards reached".to_string());
+            return;
+        }
+        self.board_creating = true;
+        self.board_edit_name.clear();
+        self.board_cursor = self.boards.len();
+    }
+
+    pub fn start_board_rename(&mut self) {
+        if let Some(board) = self.boards.get(self.board_cursor) {
+            self.board_editing = true;
+            self.board_edit_name = board.name.clone();
+        }
+    }
+
+    pub fn board_edit_insert_char(&mut self, c: char) {
+        if self.board_edit_name.chars().count() >= MAX_BOARD_NAME_LEN {
+            return;
+        }
+        self.board_edit_name.push(c);
+    }
+
+    pub fn confirm_board_edit(&mut self) {
+        let name = self.board_edit_name.trim().to_string();
+        if name.is_empty() || name.len() > MAX_BOARD_NAME_LEN {
+            self.set_flash("Board name must be 1-50 characters".to_string());
+            return;
+        }
+        if self.boards.iter().any(|b| {
+            b.name == name
+                && (self.board_creating
+                    || self.boards.get(self.board_cursor).map(|x| x.id) != Some(b.id))
+        }) {
+            self.set_flash("Board name already exists".to_string());
+            return;
+        }
+
+        if self.board_creating {
+            let _ = db::insert_board(&self.db, &name);
+            self.board_creating = false;
+        } else if self.board_editing {
+            if let Some(board) = self.boards.get(self.board_cursor) {
+                let _ = db::update_board_name(&self.db, board.id, &name);
+            }
+            self.board_editing = false;
+        }
+        self.board_edit_name.clear();
+        self.reload_boards();
+    }
+
+    pub fn cancel_board_edit(&mut self) {
+        self.board_creating = false;
+        self.board_editing = false;
+        self.board_edit_name.clear();
+        if self.board_cursor >= self.boards.len() {
+            self.board_cursor = self.boards.len().saturating_sub(1);
+        }
+    }
+
+    pub fn open_board_delete_confirm(&mut self) {
+        if self.boards.len() <= 1 {
+            self.set_flash("Cannot delete the last board".to_string());
+            return;
+        }
+        self.mode = AppMode::BoardDeleteConfirm;
+    }
+
+    pub fn confirm_board_delete(&mut self) {
+        if let Some(board) = self.boards.get(self.board_cursor) {
+            let deleted_uuid = board.uuid.clone();
+            let _ = db::soft_delete_board_cascade(&self.db, board.id);
+            self.board_states.remove(&deleted_uuid);
+            self.reload_boards();
+            self.reload_tasks();
+            if deleted_uuid == self.active_board_uuid {
+                if let Some(first) = self.boards.first() {
+                    self.active_board_uuid = first.uuid.clone();
+                    let _ =
+                        db::set_preference(&self.db, PREF_ACTIVE_BOARD, &self.active_board_uuid);
+                }
+            }
+            self.board_cursor = self.board_cursor.min(self.boards.len().saturating_sub(1));
+        }
+        self.mode = AppMode::BoardManagement;
+    }
+
+    pub fn cancel_board_delete(&mut self) {
+        self.mode = AppMode::BoardManagement;
     }
 }
 

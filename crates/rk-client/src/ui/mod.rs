@@ -1,10 +1,12 @@
 pub mod board;
+pub mod board_mgmt;
 pub mod delete_confirm;
 pub mod detail;
 pub mod help_bar;
 pub mod modal;
 pub mod search_bar;
 pub mod sort_menu;
+pub mod tab_bar;
 pub mod tag_screen;
 
 use ratatui::layout::Alignment;
@@ -27,8 +29,11 @@ pub fn render(frame: &mut Frame, app: &App) {
         return;
     }
 
-    // Layout: board + optional search bar + status bar
-    let mut constraints = vec![Constraint::Min(1)];
+    // Layout: tab bar + board + optional search bar + status bar
+    let mut constraints = vec![
+        Constraint::Length(1), // tab bar
+        Constraint::Min(1),    // board area
+    ];
     if app.search_active || app.mode == AppMode::SearchFilter {
         constraints.push(Constraint::Length(1));
     }
@@ -37,6 +42,9 @@ pub fn render(frame: &mut Frame, app: &App) {
     let chunks = Layout::vertical(constraints).split(area);
 
     let mut idx = 0;
+    tab_bar::render(frame, app, chunks[idx]);
+    idx += 1;
+
     board::render(frame, app, chunks[idx]);
     idx += 1;
 
@@ -54,6 +62,8 @@ pub fn render(frame: &mut Frame, app: &App) {
         AppMode::SortMenu => sort_menu::render(frame, app),
         AppMode::DeleteConfirm | AppMode::ClearDoneConfirm => delete_confirm::render(frame, app),
         AppMode::TagManagement => tag_screen::render(frame, app),
+        AppMode::BoardManagement => board_mgmt::render(frame, app),
+        AppMode::BoardDeleteConfirm => board_mgmt::render_delete_confirm(frame, app),
         _ => {}
     }
 

@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use crate::auth::{self, Credentials};
 use crate::db::{self, TS_FMT};
-use rk_shared::{SyncPayload, SyncResponse, SyncTag, SyncTask};
+use rk_shared::{SyncBoard, SyncPayload, SyncResponse, SyncTag, SyncTask};
 
 #[derive(Debug)]
 pub enum SyncError {
@@ -48,6 +48,7 @@ pub fn pull(conn: &Connection) -> Result<String, SyncError> {
     let payload = SyncPayload {
         tasks: vec![],
         tags: vec![],
+        boards: vec![],
         last_synced_at: creds.last_synced_at.clone(),
     };
 
@@ -94,6 +95,7 @@ fn save_last_synced(synced_at: &str) {
 fn build_push_payload(conn: &Connection, creds: &Credentials) -> Result<SyncPayload, SyncError> {
     let all_tasks = db::load_all_tasks(conn)?;
     let all_tags = db::load_all_tags(conn)?;
+    let all_boards = db::load_all_boards(conn)?;
     let all_tag_uuids = db::get_all_task_tag_uuids(conn)?;
 
     let tasks: Vec<SyncTask> = if let Some(ref last) = creds.last_synced_at {
@@ -111,10 +113,12 @@ fn build_push_payload(conn: &Connection, creds: &Credentials) -> Result<SyncPayl
     };
 
     let tags: Vec<SyncTag> = all_tags.iter().map(tag_to_sync).collect();
+    let boards: Vec<SyncBoard> = all_boards.iter().map(board_to_sync).collect();
 
     Ok(SyncPayload {
         tasks,
         tags,
+        boards,
         last_synced_at: creds.last_synced_at.clone(),
     })
 }
@@ -135,6 +139,11 @@ fn task_to_sync(
         created_at: task.created_at.format(TS_FMT).to_string(),
         updated_at: task.updated_at.format(TS_FMT).to_string(),
         deleted: task.deleted,
+        board_uuid: if task.board_id.is_empty() {
+            None
+        } else {
+            Some(task.board_id.clone())
+        },
     }
 }
 
@@ -144,6 +153,16 @@ fn tag_to_sync(tag: &crate::model::Tag) -> SyncTag {
         name: tag.name.clone(),
         updated_at: tag.updated_at.format(TS_FMT).to_string(),
         deleted: tag.deleted,
+    }
+}
+
+fn board_to_sync(board: &crate::model::Board) -> SyncBoard {
+    SyncBoard {
+        uuid: board.uuid.clone(),
+        name: board.name.clone(),
+        position: board.position,
+        updated_at: board.updated_at.format(TS_FMT).to_string(),
+        deleted: board.deleted,
     }
 }
 
@@ -178,12 +197,17 @@ fn post_sync(
 }
 
 fn apply_pull_response(conn: &Connection, response: &SyncResponse) -> Result<(), SyncError> {
-    // Tags first (dependency order)
+    // Boards first (tasks reference them)
+    for board in &response.boards {
+        db::upsert_board_from_sync(conn, board)?;
+    }
+
+    // Tags second
     for tag in &response.tags {
         db::upsert_tag_from_sync(conn, tag)?;
     }
 
-    // Then tasks (batch to share tag uuid→id map)
+    // Then tasks
     db::upsert_tasks_from_sync(conn, &response.tasks)?;
 
     Ok(())

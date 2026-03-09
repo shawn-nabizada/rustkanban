@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use axum::{Extension, Json};
 use chrono::NaiveDate;
-use rk_shared::{SyncPayload, SyncResponse, SyncTag, SyncTask};
+use rk_shared::{SyncBoard, SyncPayload, SyncResponse, SyncTag, SyncTask};
 use sqlx::postgres::PgConnection;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -61,6 +61,18 @@ pub async fn pull(
         .await?
     };
 
+    let boards = if full_pull {
+        fetch_all_boards(&pool, auth.user_id).await?
+    } else {
+        #[allow(clippy::unnecessary_unwrap)]
+        fetch_boards_since(
+            &pool,
+            auth.user_id,
+            payload.last_synced_at.as_ref().unwrap(),
+        )
+        .await?
+    };
+
     // Update device
     sqlx::query("UPDATE devices SET last_synced_at = NOW(), stale = FALSE WHERE id = $1")
         .bind(device_id)
@@ -72,6 +84,7 @@ pub async fn pull(
     Ok(Json(SyncResponse {
         tasks,
         tags,
+        boards,
         tag_uuid_mappings: HashMap::new(),
         synced_at,
     }))
@@ -92,10 +105,15 @@ pub async fn push(
 
     let mut tx = pool.begin().await?;
     let mut tag_uuid_mappings: HashMap<String, String> = HashMap::new();
+    let mut rejected_boards: Vec<SyncBoard> = Vec::new();
     let mut rejected_tags: Vec<SyncTag> = Vec::new();
     let mut rejected_tasks: Vec<SyncTask> = Vec::new();
 
-    // 1. Process tags first (name dedup may produce mappings)
+    // 1. Process boards first (tasks reference boards)
+    let boards_rejected = process_boards(&mut *tx, auth.user_id, &payload.boards).await?;
+    rejected_boards.extend(boards_rejected);
+
+    // 2. Process tags (name dedup may produce mappings)
     for tag in &payload.tags {
         match process_push_tag(&mut *tx, auth.user_id, tag).await? {
             TagResult::Accepted => {}
@@ -114,7 +132,7 @@ pub async fn push(
         }
     }
 
-    // 2. Process tasks (remapping any deduped tag UUIDs)
+    // 3. Process tasks (remapping any deduped tag UUIDs)
     for task in &payload.tasks {
         let remapped_tags: Vec<String> = task
             .tags
@@ -146,6 +164,7 @@ pub async fn push(
     Ok(Json(SyncResponse {
         tasks: rejected_tasks,
         tags: rejected_tags,
+        boards: rejected_boards,
         tag_uuid_mappings,
         synced_at,
     }))
@@ -194,9 +213,29 @@ pub async fn combined(
         .await?
     };
 
+    let mut response_boards = if full_pull {
+        fetch_all_boards_conn(&mut *tx, auth.user_id).await?
+    } else {
+        #[allow(clippy::unnecessary_unwrap)]
+        fetch_boards_since_conn(
+            &mut *tx,
+            auth.user_id,
+            payload.last_synced_at.as_ref().unwrap(),
+        )
+        .await?
+    };
+
     // ── Push phase ──────────────────────────────────────────────────────
 
     let mut tag_uuid_mappings: HashMap<String, String> = HashMap::new();
+
+    // Process boards first (tasks reference boards)
+    let boards_rejected = process_boards(&mut *tx, auth.user_id, &payload.boards).await?;
+    for board in boards_rejected {
+        if !response_boards.iter().any(|b| b.uuid == board.uuid) {
+            response_boards.push(board);
+        }
+    }
 
     for tag in &payload.tags {
         match process_push_tag(&mut *tx, auth.user_id, tag).await? {
@@ -248,6 +287,7 @@ pub async fn combined(
     Ok(Json(SyncResponse {
         tasks: response_tasks,
         tags: response_tags,
+        boards: response_boards,
         tag_uuid_mappings,
         synced_at,
     }))
@@ -310,6 +350,15 @@ async fn validate_limits(
             .await?;
     if tag_count > 15 {
         return Err(AppError::Validation("Tag limit exceeded (max 15)".into()));
+    }
+
+    let board_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM boards WHERE user_id = $1 AND deleted = FALSE")
+            .bind(user_id)
+            .fetch_one(pool)
+            .await?;
+    if board_count > 5 {
+        return Err(AppError::Validation("Maximum of 5 boards per user".into()));
     }
 
     let device_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE user_id = $1")
@@ -421,6 +470,9 @@ async fn process_push_task(
     .fetch_optional(&mut *tx)
     .await?;
 
+    // Resolve board_uuid: use provided value or fall back to user's first board
+    let board_uuid = resolve_board_uuid(&mut *tx, user_id, task.board_uuid.as_deref()).await?;
+
     if let Some(server_updated) = existing_updated {
         if task.updated_at > server_updated {
             // Client wins — update
@@ -429,8 +481,9 @@ async fn process_push_task(
                 "UPDATE tasks SET title = $1, description = $2, priority = $3, \
                  column_name = $4, due_date = $5, updated_at = $6::timestamp, \
                  deleted = $7, \
-                 deleted_at = CASE WHEN $7 THEN NOW() ELSE NULL END \
-                 WHERE uuid = $8 AND user_id = $9",
+                 deleted_at = CASE WHEN $7 THEN NOW() ELSE NULL END, \
+                 board_uuid = $8 \
+                 WHERE uuid = $9 AND user_id = $10",
             )
             .bind(&task.title)
             .bind(&task.description)
@@ -439,6 +492,7 @@ async fn process_push_task(
             .bind(due_date)
             .bind(&task.updated_at)
             .bind(task.deleted)
+            .bind(board_uuid)
             .bind(task_uuid)
             .bind(user_id)
             .execute(&mut *tx)
@@ -457,9 +511,9 @@ async fn process_push_task(
     sqlx::query(
         "INSERT INTO tasks \
          (uuid, user_id, title, description, priority, column_name, \
-          due_date, created_at, updated_at, deleted, deleted_at) \
+          due_date, created_at, updated_at, deleted, deleted_at, board_uuid) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8::timestamp, $9::timestamp, $10, \
-         CASE WHEN $10 THEN $9::timestamp ELSE NULL END)",
+         CASE WHEN $10 THEN $9::timestamp ELSE NULL END, $11)",
     )
     .bind(task_uuid)
     .bind(user_id)
@@ -471,6 +525,7 @@ async fn process_push_task(
     .bind(&task.created_at)
     .bind(&task.updated_at)
     .bind(task.deleted)
+    .bind(board_uuid)
     .execute(&mut *tx)
     .await?;
 
@@ -552,6 +607,7 @@ type TaskRow = (
     String,
     bool,
     Option<Vec<String>>,
+    Option<String>,
 );
 
 fn task_row_to_sync(r: TaskRow) -> SyncTask {
@@ -569,6 +625,7 @@ fn task_row_to_sync(r: TaskRow) -> SyncTask {
         created_at: r.6,
         updated_at: r.7,
         deleted: r.8,
+        board_uuid: r.10,
     }
 }
 
@@ -579,7 +636,8 @@ where
     let rows: Vec<TaskRow> = sqlx::query_as(&format!(
         "SELECT t.uuid, t.title, t.description, t.priority, t.column_name, t.due_date, \
          to_char(t.created_at, '{TS_FMT}'), to_char(t.updated_at, '{TS_FMT}'), t.deleted, \
-         COALESCE(array_agg(tt.tag_uuid::text) FILTER (WHERE tt.tag_uuid IS NOT NULL), ARRAY[]::text[]) \
+         COALESCE(array_agg(tt.tag_uuid::text) FILTER (WHERE tt.tag_uuid IS NOT NULL), ARRAY[]::text[]), \
+         t.board_uuid::text \
          FROM tasks t \
          LEFT JOIN task_tags tt ON tt.task_uuid = t.uuid \
          WHERE t.user_id = $1 \
@@ -603,7 +661,8 @@ where
     let rows: Vec<TaskRow> = sqlx::query_as(&format!(
         "SELECT t.uuid, t.title, t.description, t.priority, t.column_name, t.due_date, \
          to_char(t.created_at, '{TS_FMT}'), to_char(t.updated_at, '{TS_FMT}'), t.deleted, \
-         COALESCE(array_agg(tt.tag_uuid::text) FILTER (WHERE tt.tag_uuid IS NOT NULL), ARRAY[]::text[]) \
+         COALESCE(array_agg(tt.tag_uuid::text) FILTER (WHERE tt.tag_uuid IS NOT NULL), ARRAY[]::text[]), \
+         t.board_uuid::text \
          FROM tasks t \
          LEFT JOIN task_tags tt ON tt.task_uuid = t.uuid \
          WHERE t.user_id = $1 AND t.updated_at > $2::timestamp \
@@ -678,7 +737,8 @@ async fn fetch_single_task(
     let row: Option<TaskRow> = sqlx::query_as(&format!(
         "SELECT t.uuid, t.title, t.description, t.priority, t.column_name, t.due_date, \
          to_char(t.created_at, '{TS_FMT}'), to_char(t.updated_at, '{TS_FMT}'), t.deleted, \
-         COALESCE(array_agg(tt.tag_uuid::text) FILTER (WHERE tt.tag_uuid IS NOT NULL), ARRAY[]::text[]) \
+         COALESCE(array_agg(tt.tag_uuid::text) FILTER (WHERE tt.tag_uuid IS NOT NULL), ARRAY[]::text[]), \
+         t.board_uuid::text \
          FROM tasks t \
          LEFT JOIN task_tags tt ON tt.task_uuid = t.uuid \
          WHERE t.uuid = $1 \
@@ -716,4 +776,192 @@ async fn fetch_tag_by_uuid(
         updated_at: r.2,
         deleted: r.3,
     }))
+}
+
+// ───────────────────────────── Board push logic ──────────────────────────────
+
+/// Process boards from a push payload. Returns rejected boards (server wins).
+async fn process_boards(
+    tx: &mut PgConnection,
+    user_id: Uuid,
+    boards: &[SyncBoard],
+) -> Result<Vec<SyncBoard>, AppError> {
+    let mut rejected = Vec::new();
+
+    for board in boards {
+        let board_uuid: Uuid = board
+            .uuid
+            .parse()
+            .map_err(|_| AppError::Validation("Invalid board UUID".into()))?;
+
+        // Check if this UUID already exists for this user
+        let existing_updated: Option<String> = sqlx::query_scalar(&format!(
+            "SELECT to_char(updated_at, '{TS_FMT}') FROM boards WHERE uuid = $1 AND user_id = $2"
+        ))
+        .bind(board_uuid)
+        .bind(user_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        if let Some(server_updated) = existing_updated {
+            // Last-write-wins
+            if board.updated_at > server_updated {
+                sqlx::query(
+                    "UPDATE boards SET name = $1, position = $2, deleted = $3, \
+                     deleted_at = CASE WHEN $3 THEN NOW() ELSE NULL END, \
+                     updated_at = $4::timestamp \
+                     WHERE uuid = $5 AND user_id = $6",
+                )
+                .bind(&board.name)
+                .bind(board.position)
+                .bind(board.deleted)
+                .bind(&board.updated_at)
+                .bind(board_uuid)
+                .bind(user_id)
+                .execute(&mut *tx)
+                .await?;
+            } else {
+                // Server wins — return server version
+                if let Some(server_board) =
+                    fetch_single_board(&mut *tx, user_id, board_uuid).await?
+                {
+                    rejected.push(server_board);
+                }
+            }
+        } else {
+            // New board — insert
+            sqlx::query(
+                "INSERT INTO boards (uuid, user_id, name, position, updated_at, deleted, deleted_at) \
+                 VALUES ($1, $2, $3, $4, $5::timestamp, $6, \
+                 CASE WHEN $6 THEN $5::timestamp ELSE NULL END)",
+            )
+            .bind(board_uuid)
+            .bind(user_id)
+            .bind(&board.name)
+            .bind(board.position)
+            .bind(&board.updated_at)
+            .bind(board.deleted)
+            .execute(&mut *tx)
+            .await?;
+        }
+    }
+
+    Ok(rejected)
+}
+
+/// Fetch a single board by UUID from within a transaction.
+async fn fetch_single_board(
+    conn: &mut PgConnection,
+    user_id: Uuid,
+    board_uuid: Uuid,
+) -> Result<Option<SyncBoard>, AppError> {
+    let row = sqlx::query_as::<_, (Uuid, String, i32, String, bool)>(&format!(
+        "SELECT uuid, name, position, to_char(updated_at, '{TS_FMT}'), deleted \
+         FROM boards WHERE uuid = $1 AND user_id = $2"
+    ))
+    .bind(board_uuid)
+    .bind(user_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+
+    Ok(row.map(|r| SyncBoard {
+        uuid: r.0.to_string(),
+        name: r.1,
+        position: r.2,
+        updated_at: r.3,
+        deleted: r.4,
+    }))
+}
+
+/// Resolve a board UUID for a task. If the client provides one, parse and use it.
+/// If not, fall back to the user's first board.
+async fn resolve_board_uuid(
+    conn: &mut PgConnection,
+    user_id: Uuid,
+    board_uuid_str: Option<&str>,
+) -> Result<Uuid, AppError> {
+    if let Some(s) = board_uuid_str {
+        if let Ok(uuid) = s.parse::<Uuid>() {
+            return Ok(uuid);
+        }
+    }
+    // Fall back to user's first board (by position)
+    let uuid: Option<Uuid> = sqlx::query_scalar(
+        "SELECT uuid FROM boards WHERE user_id = $1 AND deleted = FALSE ORDER BY position LIMIT 1",
+    )
+    .bind(user_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+
+    uuid.ok_or_else(|| AppError::Validation("No board found for user".into()))
+}
+
+// ───────────────────────────── Board fetch helpers ────────────────────────────
+
+async fn fetch_all_boards(pool: &PgPool, user_id: Uuid) -> Result<Vec<SyncBoard>, AppError> {
+    fetch_all_boards_conn(pool, user_id).await
+}
+
+async fn fetch_boards_since(
+    pool: &PgPool,
+    user_id: Uuid,
+    since: &str,
+) -> Result<Vec<SyncBoard>, AppError> {
+    fetch_boards_since_conn(pool, user_id, since).await
+}
+
+async fn fetch_all_boards_conn<'e, E>(
+    executor: E,
+    user_id: Uuid,
+) -> Result<Vec<SyncBoard>, AppError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    let rows = sqlx::query_as::<_, (Uuid, String, i32, String, bool)>(&format!(
+        "SELECT uuid, name, position, to_char(updated_at, '{TS_FMT}'), deleted \
+         FROM boards WHERE user_id = $1"
+    ))
+    .bind(user_id)
+    .fetch_all(executor)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| SyncBoard {
+            uuid: r.0.to_string(),
+            name: r.1,
+            position: r.2,
+            updated_at: r.3,
+            deleted: r.4,
+        })
+        .collect())
+}
+
+async fn fetch_boards_since_conn<'e, E>(
+    executor: E,
+    user_id: Uuid,
+    since: &str,
+) -> Result<Vec<SyncBoard>, AppError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    let rows = sqlx::query_as::<_, (Uuid, String, i32, String, bool)>(&format!(
+        "SELECT uuid, name, position, to_char(updated_at, '{TS_FMT}'), deleted \
+         FROM boards WHERE user_id = $1 AND updated_at > $2::timestamp"
+    ))
+    .bind(user_id)
+    .bind(since)
+    .fetch_all(executor)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| SyncBoard {
+            uuid: r.0.to_string(),
+            name: r.1,
+            position: r.2,
+            updated_at: r.3,
+            deleted: r.4,
+        })
+        .collect())
 }

@@ -5,6 +5,8 @@ use std::collections::HashMap;
 pub struct SyncPayload {
     pub tasks: Vec<SyncTask>,
     pub tags: Vec<SyncTag>,
+    #[serde(default)]
+    pub boards: Vec<SyncBoard>,
     pub last_synced_at: Option<String>,
 }
 
@@ -26,6 +28,8 @@ pub struct SyncTask {
     pub updated_at: String,
     #[serde(default)]
     pub deleted: bool,
+    #[serde(default)]
+    pub board_uuid: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,9 +42,22 @@ pub struct SyncTag {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncBoard {
+    pub uuid: String,
+    pub name: String,
+    #[serde(default)]
+    pub position: i32,
+    pub updated_at: String,
+    #[serde(default)]
+    pub deleted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncResponse {
     pub tasks: Vec<SyncTask>,
     pub tags: Vec<SyncTag>,
+    #[serde(default)]
+    pub boards: Vec<SyncBoard>,
     #[serde(default)]
     pub tag_uuid_mappings: HashMap<String, String>,
     pub synced_at: String,
@@ -96,6 +113,7 @@ mod tests {
                 created_at: "2026-01-01T00:00:00".into(),
                 updated_at: "2026-01-01T00:00:00".into(),
                 deleted: false,
+                board_uuid: None,
             }],
             tags: vec![SyncTag {
                 uuid: "tag-uuid-1".into(),
@@ -103,11 +121,74 @@ mod tests {
                 updated_at: "2026-01-01T00:00:00".into(),
                 deleted: false,
             }],
+            boards: vec![],
             last_synced_at: Some("2026-01-01T00:00:00".into()),
         };
         let json = serde_json::to_string(&payload).unwrap();
         let roundtrip: SyncPayload = serde_json::from_str(&json).unwrap();
         assert_eq!(roundtrip.tasks.len(), 1);
         assert_eq!(roundtrip.tags.len(), 1);
+    }
+
+    #[test]
+    fn test_sync_board_roundtrip() {
+        let board = SyncBoard {
+            uuid: "board-1".into(),
+            name: "Personal".into(),
+            position: 0,
+            updated_at: "2026-01-01T00:00:00".into(),
+            deleted: false,
+        };
+        let json = serde_json::to_string(&board).unwrap();
+        let roundtrip: SyncBoard = serde_json::from_str(&json).unwrap();
+        assert_eq!(roundtrip.name, "Personal");
+        assert_eq!(roundtrip.position, 0);
+    }
+
+    #[test]
+    fn test_sync_payload_with_boards() {
+        let payload = SyncPayload {
+            tasks: vec![],
+            tags: vec![],
+            boards: vec![SyncBoard {
+                uuid: "b-1".into(),
+                name: "Work".into(),
+                position: 0,
+                updated_at: "2026-01-01T00:00:00".into(),
+                deleted: false,
+            }],
+            last_synced_at: None,
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        let roundtrip: SyncPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(roundtrip.boards.len(), 1);
+    }
+
+    #[test]
+    fn test_sync_payload_backward_compat_no_boards() {
+        let json = r#"{"tasks":[],"tags":[]}"#;
+        let payload: SyncPayload = serde_json::from_str(json).unwrap();
+        assert!(payload.boards.is_empty());
+    }
+
+    #[test]
+    fn test_sync_task_with_board_uuid() {
+        let json = r#"{"uuid":"t1","title":"t","board_uuid":"b1","created_at":"2026-01-01T00:00:00","updated_at":"2026-01-01T00:00:00"}"#;
+        let task: SyncTask = serde_json::from_str(json).unwrap();
+        assert_eq!(task.board_uuid, Some("b1".to_string()));
+    }
+
+    #[test]
+    fn test_sync_task_without_board_uuid() {
+        let json = r#"{"uuid":"t1","title":"t","created_at":"2026-01-01T00:00:00","updated_at":"2026-01-01T00:00:00"}"#;
+        let task: SyncTask = serde_json::from_str(json).unwrap();
+        assert_eq!(task.board_uuid, None);
+    }
+
+    #[test]
+    fn test_sync_response_with_boards() {
+        let json = r#"{"tasks":[],"tags":[],"boards":[],"synced_at":"2026-01-01T00:00:00"}"#;
+        let resp: SyncResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.boards.is_empty());
     }
 }

@@ -7,6 +7,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Added
+- Multiple boards: up to 5 named boards per user with tab bar (1-5 to switch), board management overlay (B key), full sync support, and export/import
 - Restructured project as Cargo workspace (rk-client, rk-server, rk-shared)
 - Added cross-machine sync via GitHub OAuth (opt-in)
 - Added `rk login`, `rk logout`, `rk sync`, `rk status` CLI commands

@@ -15,6 +15,8 @@ pub fn handle_event(app: &mut App, key: KeyEvent) {
         AppMode::ClearDoneConfirm => handle_clear_done_confirm(app, key),
         AppMode::TagManagement => handle_tag_management(app, key),
         AppMode::SearchFilter => handle_search(app, key),
+        AppMode::BoardManagement => handle_board_management(app, key),
+        AppMode::BoardDeleteConfirm => handle_board_delete_confirm(app, key),
     }
 }
 
@@ -52,6 +54,12 @@ fn handle_board(app: &mut App, key: KeyEvent) {
         KeyCode::Char('t') | KeyCode::Char('T') => app.open_tag_management(),
         KeyCode::Char('/') => app.open_search(),
         KeyCode::Char('?') => app.toggle_help(),
+        KeyCode::Char('1') => app.switch_board_by_index(0),
+        KeyCode::Char('2') => app.switch_board_by_index(1),
+        KeyCode::Char('3') => app.switch_board_by_index(2),
+        KeyCode::Char('4') => app.switch_board_by_index(3),
+        KeyCode::Char('5') => app.switch_board_by_index(4),
+        KeyCode::Char('b') => app.open_board_management(),
         _ => {}
     }
 }
@@ -193,6 +201,48 @@ fn handle_tag_management(app: &mut App, key: KeyEvent) {
     }
 }
 
+fn handle_board_management(app: &mut App, key: KeyEvent) {
+    if app.board_editing || app.board_creating {
+        // Text input mode
+        match key.code {
+            KeyCode::Enter => app.confirm_board_edit(),
+            KeyCode::Esc => app.cancel_board_edit(),
+            KeyCode::Backspace => {
+                app.board_edit_name.pop();
+            }
+            KeyCode::Char(c) => app.board_edit_insert_char(c),
+            _ => {}
+        }
+        return;
+    }
+
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => app.close_board_management(),
+        KeyCode::Up => app.board_mgmt_cursor_up(),
+        KeyCode::Down => app.board_mgmt_cursor_down(),
+        KeyCode::Char('n') => app.start_board_create(),
+        KeyCode::Char('r') => app.start_board_rename(),
+        KeyCode::Char('d') => app.open_board_delete_confirm(),
+        KeyCode::Enter => {
+            // Switch to the selected board and close
+            if let Some(board) = app.boards.get(app.board_cursor) {
+                let uuid = board.uuid.clone();
+                app.switch_board(&uuid);
+            }
+            app.close_board_management();
+        }
+        _ => {}
+    }
+}
+
+fn handle_board_delete_confirm(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Char('y') | KeyCode::Char('Y') => app.confirm_board_delete(),
+        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => app.cancel_board_delete(),
+        _ => {}
+    }
+}
+
 fn handle_search(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc => app.close_search(),
@@ -204,6 +254,23 @@ fn handle_search(app: &mut App, key: KeyEvent) {
 }
 
 pub fn handle_mouse(app: &mut App, mouse: MouseEvent) {
+    // Tab bar click (first row) — handle before mode check so it works from any mode
+    if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) && mouse.row == 0 {
+        let mut x_offset: u16 = 0;
+        for (i, board) in app.boards.iter().enumerate() {
+            let label_len = format!("{} {}", i + 1, board.name).len() as u16;
+            if i > 0 {
+                x_offset += 3; // " | " separator
+            }
+            if mouse.column >= x_offset && mouse.column < x_offset + label_len {
+                app.switch_board_by_index(i);
+                return;
+            }
+            x_offset += label_len;
+        }
+        return;
+    }
+
     // Only handle mouse in board/selected modes
     match app.mode {
         AppMode::Board | AppMode::Selected => {}
@@ -217,11 +284,14 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent) {
         return;
     }
 
+    // Adjust y coordinate: subtract 1 for the tab bar row
+    let board_y = mouse.row.saturating_sub(1);
+
     match mouse.kind {
         MouseEventKind::Down(MouseButton::Left) => {
             if let Some(col) = app.column_at_x(mouse.column) {
                 app.focused_column = col;
-                if let Some(idx) = app.task_at_y(col, mouse.row) {
+                if let Some(idx) = app.task_at_y(col, board_y) {
                     app.cursor_positions[col.index()] = idx;
                     // Start drag
                     if let Some(task_id) = app.current_task_id() {

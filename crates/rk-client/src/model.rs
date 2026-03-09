@@ -117,6 +117,7 @@ impl std::str::FromStr for Column {
 pub struct Task {
     pub id: i64,
     pub uuid: String,
+    pub board_id: String, // board UUID
     pub title: String,
     pub description: String,
     pub priority: Priority,
@@ -135,6 +136,19 @@ pub struct Tag {
     pub id: i64,
     pub uuid: String,
     pub name: String,
+    pub updated_at: NaiveDateTime,
+    pub deleted: bool,
+    pub deleted_at: Option<NaiveDateTime>,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct Board {
+    pub id: i64,
+    pub uuid: String,
+    pub name: String,
+    pub position: i32,
+    pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
     pub deleted: bool,
     pub deleted_at: Option<NaiveDateTime>,

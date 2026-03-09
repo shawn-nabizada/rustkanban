@@ -46,11 +46,16 @@ pub fn render(frame: &mut Frame, _app: &App) {
             ],
         ),
         (
+            "Boards",
+            vec![("1-5", "Switch to board N"), ("B", "Board management")],
+        ),
+        (
             "Other",
             vec![
                 ("S", "Sort / filter menu"),
                 ("T", "Tag management"),
                 ("/", "Search tasks"),
+                ("Ctrl+R", "Manual sync"),
                 ("?", "Toggle this help"),
                 ("Esc / Q", "Quit"),
             ],

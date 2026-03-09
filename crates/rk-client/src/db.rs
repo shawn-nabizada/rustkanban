@@ -1,6 +1,6 @@
 use rusqlite::{Connection, Result as SqliteResult};
 
-use crate::model::{Column, Priority, Tag, Task};
+use crate::model::{Board, Column, Priority, Tag, Task};
 
 pub(crate) const TS_FMT: &str = "%Y-%m-%dT%H:%M:%S";
 
@@ -100,6 +100,57 @@ fn migrate_v2(conn: &Connection) -> SqliteResult<()> {
     Ok(())
 }
 
+fn migrate_v3(conn: &Connection) -> SqliteResult<()> {
+    // Create boards table
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS boards (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            uuid TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            position INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            deleted INTEGER NOT NULL DEFAULT 0,
+            deleted_at TEXT
+        );
+        ",
+    )?;
+
+    // Create the default "Personal" board
+    let board_uuid = uuid::Uuid::new_v4().to_string();
+    let now = now_timestamp();
+    conn.execute(
+        "INSERT INTO boards (uuid, name, position, created_at, updated_at) VALUES (?1, ?2, 0, ?3, ?4)",
+        rusqlite::params![board_uuid, "Personal", now, now],
+    )?;
+
+    // Add board_id column to tasks
+    conn.execute_batch("ALTER TABLE tasks ADD COLUMN board_id TEXT NOT NULL DEFAULT '';")?;
+
+    // Backfill all existing tasks to the Personal board
+    conn.execute(
+        "UPDATE tasks SET board_id = ?1",
+        rusqlite::params![board_uuid],
+    )?;
+
+    // Save the active board preference
+    conn.execute(
+        "INSERT INTO preferences (key, value) VALUES ('active_board', ?1)
+         ON CONFLICT(key) DO UPDATE SET value = ?1",
+        rusqlite::params![board_uuid],
+    )?;
+
+    // Record schema version
+    conn.execute(
+        "INSERT INTO preferences (key, value) VALUES ('schema_version', '3')
+         ON CONFLICT(key) DO UPDATE SET value = '3'",
+        [],
+    )?;
+
+    Ok(())
+}
+
 pub(crate) fn run_migrations(conn: &Connection) -> SqliteResult<()> {
     // v1: idempotent table creation
     conn.execute_batch(
@@ -140,6 +191,11 @@ pub(crate) fn run_migrations(conn: &Connection) -> SqliteResult<()> {
         migrate_v2(conn)?;
     }
 
+    // v3: add boards table, board_id column on tasks
+    if get_schema_version(conn) < 3 {
+        migrate_v3(conn)?;
+    }
+
     Ok(())
 }
 
@@ -156,10 +212,10 @@ pub fn load_all_tasks(conn: &Connection) -> SqliteResult<Vec<Task>> {
 
 fn load_tasks_filtered(conn: &Connection, active_only: bool) -> SqliteResult<Vec<Task>> {
     let sql = if active_only {
-        "SELECT id, uuid, title, description, priority, column_name, due_date, created_at, updated_at, deleted, deleted_at
+        "SELECT id, uuid, title, description, priority, column_name, due_date, created_at, updated_at, deleted, deleted_at, board_id
          FROM tasks WHERE deleted = 0"
     } else {
-        "SELECT id, uuid, title, description, priority, column_name, due_date, created_at, updated_at, deleted, deleted_at
+        "SELECT id, uuid, title, description, priority, column_name, due_date, created_at, updated_at, deleted, deleted_at, board_id
          FROM tasks"
     };
 
@@ -174,10 +230,12 @@ fn load_tasks_filtered(conn: &Connection, active_only: bool) -> SqliteResult<Vec
             let updated_str: String = row.get(8)?;
             let deleted_int: i32 = row.get(9)?;
             let deleted_at_str: Option<String> = row.get(10)?;
+            let board_id_str: String = row.get(11)?;
 
             Ok(Task {
                 id: row.get(0)?,
                 uuid: row.get(1)?,
+                board_id: board_id_str,
                 title: row.get(2)?,
                 description: row.get(3)?,
                 priority: priority_str.parse::<Priority>().unwrap_or(Priority::Medium),
@@ -348,6 +406,7 @@ pub fn insert_task(
     priority: Priority,
     column: Column,
     due_date: Option<chrono::NaiveDate>,
+    board_id: &str,
 ) -> SqliteResult<i64> {
     let task_uuid = uuid::Uuid::new_v4().to_string();
     insert_task_with_uuid(
@@ -358,9 +417,11 @@ pub fn insert_task(
         priority,
         column,
         due_date,
+        board_id,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn insert_task_with_uuid(
     conn: &Connection,
     uuid: &str,
@@ -369,13 +430,14 @@ pub fn insert_task_with_uuid(
     priority: Priority,
     column: Column,
     due_date: Option<chrono::NaiveDate>,
+    board_id: &str,
 ) -> SqliteResult<i64> {
     let now = now_timestamp();
     let due_date_str = due_date.map(|d| d.format("%Y-%m-%d").to_string());
 
     conn.execute(
-        "INSERT INTO tasks (title, description, priority, column_name, due_date, created_at, updated_at, uuid)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        "INSERT INTO tasks (title, description, priority, column_name, due_date, created_at, updated_at, uuid, board_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         rusqlite::params![
             title,
             description,
@@ -385,6 +447,7 @@ pub fn insert_task_with_uuid(
             now,
             now,
             uuid,
+            board_id,
         ],
     )?;
 
@@ -494,11 +557,175 @@ pub fn cleanup_old_soft_deletes(conn: &Connection, days: i64) -> SqliteResult<()
         "DELETE FROM tags WHERE deleted = 1 AND deleted_at < ?1",
         rusqlite::params![cutoff],
     )?;
+    conn.execute(
+        "DELETE FROM boards WHERE deleted = 1 AND deleted_at < ?1",
+        rusqlite::params![cutoff],
+    )?;
+    Ok(())
+}
+
+pub fn load_boards(conn: &Connection) -> SqliteResult<Vec<Board>> {
+    load_boards_filtered(conn, true)
+}
+
+pub fn load_all_boards(conn: &Connection) -> SqliteResult<Vec<Board>> {
+    load_boards_filtered(conn, false)
+}
+
+fn load_boards_filtered(conn: &Connection, active_only: bool) -> SqliteResult<Vec<Board>> {
+    let sql = if active_only {
+        "SELECT id, uuid, name, position, created_at, updated_at, deleted, deleted_at
+         FROM boards WHERE deleted = 0 ORDER BY position, id"
+    } else {
+        "SELECT id, uuid, name, position, created_at, updated_at, deleted, deleted_at
+         FROM boards ORDER BY position, id"
+    };
+    let mut stmt = conn.prepare(sql)?;
+    let boards = stmt
+        .query_map([], |row| {
+            let created_str: String = row.get(4)?;
+            let updated_str: String = row.get(5)?;
+            let deleted_int: i32 = row.get(6)?;
+            let deleted_at_str: Option<String> = row.get(7)?;
+            Ok(Board {
+                id: row.get(0)?,
+                uuid: row.get(1)?,
+                name: row.get(2)?,
+                position: row.get(3)?,
+                created_at: chrono::NaiveDateTime::parse_from_str(&created_str, TS_FMT)
+                    .unwrap_or_default(),
+                updated_at: chrono::NaiveDateTime::parse_from_str(&updated_str, TS_FMT)
+                    .unwrap_or_default(),
+                deleted: deleted_int != 0,
+                deleted_at: deleted_at_str
+                    .and_then(|s| chrono::NaiveDateTime::parse_from_str(&s, TS_FMT).ok()),
+            })
+        })?
+        .collect::<SqliteResult<Vec<_>>>()?;
+    Ok(boards)
+}
+
+pub fn insert_board(conn: &Connection, name: &str) -> SqliteResult<i64> {
+    let uuid = uuid::Uuid::new_v4().to_string();
+    let now = now_timestamp();
+    let position: i32 = conn.query_row(
+        "SELECT COALESCE(MAX(position), -1) + 1 FROM boards WHERE deleted = 0",
+        [],
+        |row| row.get(0),
+    )?;
+    conn.execute(
+        "INSERT INTO boards (uuid, name, position, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![uuid, name, position, now, now],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+pub fn insert_board_with_uuid(
+    conn: &Connection,
+    uuid: &str,
+    name: &str,
+    position: i32,
+) -> SqliteResult<i64> {
+    let now = now_timestamp();
+    conn.execute(
+        "INSERT INTO boards (uuid, name, position, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![uuid, name, position, now, now],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+pub fn update_board_name(conn: &Connection, board_id: i64, name: &str) -> SqliteResult<()> {
+    let now = now_timestamp();
+    conn.execute(
+        "UPDATE boards SET name = ?1, updated_at = ?2 WHERE id = ?3",
+        rusqlite::params![name, now, board_id],
+    )?;
+    Ok(())
+}
+
+pub fn soft_delete_board(conn: &Connection, board_id: i64) -> SqliteResult<()> {
+    let now = now_timestamp();
+    conn.execute(
+        "UPDATE boards SET deleted = 1, deleted_at = ?1, updated_at = ?1 WHERE id = ?2",
+        rusqlite::params![now, board_id],
+    )?;
+    Ok(())
+}
+
+pub fn soft_delete_board_cascade(conn: &Connection, board_id: i64) -> SqliteResult<()> {
+    let board_uuid: String = conn.query_row(
+        "SELECT uuid FROM boards WHERE id = ?1",
+        rusqlite::params![board_id],
+        |row| row.get(0),
+    )?;
+    let now = now_timestamp();
+    conn.execute(
+        "UPDATE tasks SET deleted = 1, deleted_at = ?1, updated_at = ?1 WHERE board_id = ?2 AND deleted = 0",
+        rusqlite::params![now, board_uuid],
+    )?;
+    soft_delete_board(conn, board_id)?;
+    Ok(())
+}
+
+pub fn board_count(conn: &Connection) -> SqliteResult<i32> {
+    conn.query_row("SELECT COUNT(*) FROM boards WHERE deleted = 0", [], |row| {
+        row.get(0)
+    })
+}
+
+pub fn upsert_board_from_sync(conn: &Connection, board: &rk_shared::SyncBoard) -> SqliteResult<()> {
+    let existing: Option<(i64, Option<String>)> = conn
+        .query_row(
+            "SELECT id, updated_at FROM boards WHERE uuid = ?1",
+            rusqlite::params![board.uuid],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .ok();
+
+    let deleted_at_val: Option<&str> = if board.deleted {
+        Some(board.updated_at.as_str())
+    } else {
+        None
+    };
+
+    match existing {
+        Some((_id, local_updated)) => {
+            let dominated = local_updated
+                .as_deref()
+                .is_some_and(|lu| lu >= board.updated_at.as_str());
+            if !dominated {
+                conn.execute(
+                    "UPDATE boards SET name=?1, position=?2, updated_at=?3, deleted=?4, deleted_at=?5 WHERE uuid=?6",
+                    rusqlite::params![board.name, board.position, board.updated_at, board.deleted as i32, deleted_at_val, board.uuid],
+                )?;
+            }
+        }
+        None => {
+            conn.execute(
+                "INSERT INTO boards (uuid, name, position, created_at, updated_at, deleted, deleted_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![board.uuid, board.name, board.position, board.updated_at, board.updated_at, board.deleted as i32, deleted_at_val],
+            )?;
+        }
+    }
     Ok(())
 }
 
 pub fn reset_db(conn: &Connection) -> SqliteResult<()> {
-    conn.execute_batch("DELETE FROM task_tags; DELETE FROM tags; DELETE FROM tasks;")?;
+    conn.execute_batch(
+        "DELETE FROM task_tags; DELETE FROM tags; DELETE FROM tasks; DELETE FROM boards;",
+    )?;
+
+    let uuid = uuid::Uuid::new_v4().to_string();
+    let now = now_timestamp();
+    conn.execute(
+        "INSERT INTO boards (uuid, name, position, created_at, updated_at) VALUES (?1, 'Personal', 0, ?2, ?3)",
+        rusqlite::params![uuid, now, now],
+    )?;
+    conn.execute(
+        "INSERT INTO preferences (key, value) VALUES ('active_board', ?1)
+         ON CONFLICT(key) DO UPDATE SET value = ?1",
+        rusqlite::params![uuid],
+    )?;
     Ok(())
 }
 
@@ -585,11 +812,18 @@ fn upsert_task_from_sync_with_map(
         )
         .ok();
 
+    let board_id = task
+        .board_uuid
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| default_board_uuid(conn).unwrap_or_default());
+
     match existing {
         Some((local_id, local_updated)) => {
             if task.updated_at > local_updated {
                 conn.execute(
-                    "UPDATE tasks SET title=?1, description=?2, priority=?3, column_name=?4, due_date=?5, updated_at=?6, deleted=?7, deleted_at=?8 WHERE uuid=?9",
+                    "UPDATE tasks SET title=?1, description=?2, priority=?3, column_name=?4, due_date=?5, updated_at=?6, deleted=?7, deleted_at=?8, board_id=?9 WHERE uuid=?10",
                     rusqlite::params![
                         task.title,
                         task.description,
@@ -599,6 +833,7 @@ fn upsert_task_from_sync_with_map(
                         task.updated_at,
                         task.deleted as i32,
                         if task.deleted { Some(&task.updated_at) } else { None },
+                        board_id,
                         task.uuid
                     ],
                 )?;
@@ -607,8 +842,8 @@ fn upsert_task_from_sync_with_map(
         }
         None => {
             conn.execute(
-                "INSERT INTO tasks (uuid, title, description, priority, column_name, due_date, created_at, updated_at, deleted, deleted_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                "INSERT INTO tasks (uuid, title, description, priority, column_name, due_date, created_at, updated_at, deleted, deleted_at, board_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 rusqlite::params![
                     task.uuid,
                     task.title,
@@ -623,7 +858,8 @@ fn upsert_task_from_sync_with_map(
                         Some(&task.updated_at)
                     } else {
                         None
-                    }
+                    },
+                    board_id
                 ],
             )?;
             let local_id = conn.last_insert_rowid();
@@ -704,6 +940,14 @@ pub fn upsert_tag_from_sync(conn: &Connection, tag: &rk_shared::SyncTag) -> Sqli
     Ok(())
 }
 
+pub fn default_board_uuid(conn: &Connection) -> SqliteResult<String> {
+    conn.query_row(
+        "SELECT uuid FROM boards WHERE deleted = 0 ORDER BY position, id LIMIT 1",
+        [],
+        |row| row.get(0),
+    )
+}
+
 #[allow(dead_code)]
 pub fn remap_tag_uuid(conn: &Connection, old_uuid: &str, new_uuid: &str) -> SqliteResult<()> {
     conn.execute(
@@ -730,10 +974,24 @@ mod tests {
         init_db_memory()
     }
 
+    fn test_board_uuid(conn: &Connection) -> String {
+        default_board_uuid(conn).unwrap()
+    }
+
     #[test]
     fn test_insert_and_load_task() {
         let conn = setup();
-        let id = insert_task(&conn, "Test", "Desc", Priority::High, Column::Todo, None).unwrap();
+        let board = test_board_uuid(&conn);
+        let id = insert_task(
+            &conn,
+            "Test",
+            "Desc",
+            Priority::High,
+            Column::Todo,
+            None,
+            &board,
+        )
+        .unwrap();
         let tasks = load_tasks(&conn).unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].id, id);
@@ -745,7 +1003,8 @@ mod tests {
     #[test]
     fn test_update_task() {
         let conn = setup();
-        let id = insert_task(&conn, "Old", "", Priority::Low, Column::Todo, None).unwrap();
+        let board = test_board_uuid(&conn);
+        let id = insert_task(&conn, "Old", "", Priority::Low, Column::Todo, None, &board).unwrap();
         update_task(&conn, id, "New", "desc", Priority::High, None).unwrap();
         let tasks = load_tasks(&conn).unwrap();
         assert_eq!(tasks[0].title, "New");
@@ -755,7 +1014,8 @@ mod tests {
     #[test]
     fn test_update_task_column() {
         let conn = setup();
-        let id = insert_task(&conn, "T", "", Priority::Medium, Column::Todo, None).unwrap();
+        let board = test_board_uuid(&conn);
+        let id = insert_task(&conn, "T", "", Priority::Medium, Column::Todo, None, &board).unwrap();
         update_task_column(&conn, id, Column::Done).unwrap();
         let tasks = load_tasks(&conn).unwrap();
         assert_eq!(tasks[0].column, Column::Done);
@@ -764,7 +1024,8 @@ mod tests {
     #[test]
     fn test_update_task_priority() {
         let conn = setup();
-        let id = insert_task(&conn, "T", "", Priority::Low, Column::Todo, None).unwrap();
+        let board = test_board_uuid(&conn);
+        let id = insert_task(&conn, "T", "", Priority::Low, Column::Todo, None, &board).unwrap();
         update_task_priority(&conn, id, Priority::High).unwrap();
         let tasks = load_tasks(&conn).unwrap();
         assert_eq!(tasks[0].priority, Priority::High);
@@ -773,7 +1034,8 @@ mod tests {
     #[test]
     fn test_delete_task() {
         let conn = setup();
-        let id = insert_task(&conn, "T", "", Priority::Medium, Column::Todo, None).unwrap();
+        let board = test_board_uuid(&conn);
+        let id = insert_task(&conn, "T", "", Priority::Medium, Column::Todo, None, &board).unwrap();
         delete_task(&conn, id).unwrap();
         assert!(load_tasks(&conn).unwrap().is_empty());
     }
@@ -797,7 +1059,9 @@ mod tests {
     #[test]
     fn test_task_tags() {
         let conn = setup();
-        let task_id = insert_task(&conn, "T", "", Priority::Medium, Column::Todo, None).unwrap();
+        let board = test_board_uuid(&conn);
+        let task_id =
+            insert_task(&conn, "T", "", Priority::Medium, Column::Todo, None, &board).unwrap();
         let tag1 = insert_tag(&conn, "a").unwrap();
         let tag2 = insert_tag(&conn, "b").unwrap();
         set_task_tags(&conn, task_id, &[tag1, tag2]).unwrap();
@@ -812,7 +1076,8 @@ mod tests {
     #[test]
     fn test_reset_db() {
         let conn = setup();
-        insert_task(&conn, "T", "", Priority::Medium, Column::Todo, None).unwrap();
+        let board = test_board_uuid(&conn);
+        insert_task(&conn, "T", "", Priority::Medium, Column::Todo, None, &board).unwrap();
         insert_tag(&conn, "x").unwrap();
         reset_db(&conn).unwrap();
         assert!(load_tasks(&conn).unwrap().is_empty());
@@ -838,8 +1103,9 @@ mod tests {
     #[test]
     fn test_due_date_roundtrip() {
         let conn = setup();
+        let board = test_board_uuid(&conn);
         let date = chrono::NaiveDate::from_ymd_opt(2026, 6, 15);
-        insert_task(&conn, "T", "", Priority::Medium, Column::Todo, date).unwrap();
+        insert_task(&conn, "T", "", Priority::Medium, Column::Todo, date, &board).unwrap();
         let tasks = load_tasks(&conn).unwrap();
         assert_eq!(tasks[0].due_date, date);
     }
@@ -848,13 +1114,14 @@ mod tests {
     fn test_schema_version_tracking() {
         let conn = init_db_memory();
         let v = get_preference(&conn, "schema_version");
-        assert_eq!(v, Some("2".to_string()));
+        assert_eq!(v, Some("3".to_string()));
     }
 
     #[test]
     fn test_tasks_have_uuids() {
         let conn = init_db_memory();
-        insert_task(&conn, "T", "", Priority::Medium, Column::Todo, None).unwrap();
+        let board = test_board_uuid(&conn);
+        insert_task(&conn, "T", "", Priority::Medium, Column::Todo, None, &board).unwrap();
         let tasks = load_tasks(&conn).unwrap();
         assert!(!tasks[0].uuid.is_empty());
         assert_eq!(tasks[0].uuid.len(), 36);
@@ -871,8 +1138,27 @@ mod tests {
     #[test]
     fn test_load_tasks_excludes_deleted() {
         let conn = init_db_memory();
-        insert_task(&conn, "Active", "", Priority::Medium, Column::Todo, None).unwrap();
-        let id2 = insert_task(&conn, "Deleted", "", Priority::Low, Column::Todo, None).unwrap();
+        let board = test_board_uuid(&conn);
+        insert_task(
+            &conn,
+            "Active",
+            "",
+            Priority::Medium,
+            Column::Todo,
+            None,
+            &board,
+        )
+        .unwrap();
+        let id2 = insert_task(
+            &conn,
+            "Deleted",
+            "",
+            Priority::Low,
+            Column::Todo,
+            None,
+            &board,
+        )
+        .unwrap();
         conn.execute(
             "UPDATE tasks SET deleted = 1, deleted_at = '2026-01-01T00:00:00' WHERE id = ?1",
             rusqlite::params![id2],
@@ -886,8 +1172,27 @@ mod tests {
     #[test]
     fn test_load_all_tasks_includes_deleted() {
         let conn = init_db_memory();
-        insert_task(&conn, "Active", "", Priority::Medium, Column::Todo, None).unwrap();
-        let id2 = insert_task(&conn, "Deleted", "", Priority::Low, Column::Todo, None).unwrap();
+        let board = test_board_uuid(&conn);
+        insert_task(
+            &conn,
+            "Active",
+            "",
+            Priority::Medium,
+            Column::Todo,
+            None,
+            &board,
+        )
+        .unwrap();
+        let id2 = insert_task(
+            &conn,
+            "Deleted",
+            "",
+            Priority::Low,
+            Column::Todo,
+            None,
+            &board,
+        )
+        .unwrap();
         conn.execute(
             "UPDATE tasks SET deleted = 1, deleted_at = '2026-01-01T00:00:00' WHERE id = ?1",
             rusqlite::params![id2],
@@ -900,7 +1205,8 @@ mod tests {
     #[test]
     fn test_soft_delete_task() {
         let conn = init_db_memory();
-        let id = insert_task(&conn, "T", "", Priority::Medium, Column::Todo, None).unwrap();
+        let board = test_board_uuid(&conn);
+        let id = insert_task(&conn, "T", "", Priority::Medium, Column::Todo, None, &board).unwrap();
         soft_delete_task(&conn, id).unwrap();
         assert!(load_tasks(&conn).unwrap().is_empty());
         assert_eq!(load_all_tasks(&conn).unwrap().len(), 1);
@@ -909,8 +1215,10 @@ mod tests {
     #[test]
     fn test_soft_delete_tag() {
         let conn = init_db_memory();
+        let board = test_board_uuid(&conn);
         let tag_id = insert_tag(&conn, "bug").unwrap();
-        let task_id = insert_task(&conn, "T", "", Priority::Medium, Column::Todo, None).unwrap();
+        let task_id =
+            insert_task(&conn, "T", "", Priority::Medium, Column::Todo, None, &board).unwrap();
         set_task_tags(&conn, task_id, &[tag_id]).unwrap();
         soft_delete_tag(&conn, tag_id).unwrap();
         assert!(load_tags(&conn).unwrap().is_empty());
@@ -920,7 +1228,8 @@ mod tests {
     #[test]
     fn test_cleanup_old_soft_deletes() {
         let conn = init_db_memory();
-        let id = insert_task(&conn, "T", "", Priority::Medium, Column::Todo, None).unwrap();
+        let board = test_board_uuid(&conn);
+        let id = insert_task(&conn, "T", "", Priority::Medium, Column::Todo, None, &board).unwrap();
         let old_date = (chrono::Local::now() - chrono::Duration::days(31))
             .naive_local()
             .format(TS_FMT)
@@ -948,6 +1257,7 @@ mod tests {
             created_at: "2026-01-01T00:00:00".into(),
             updated_at: "2026-01-01T00:00:00".into(),
             deleted: false,
+            board_uuid: None,
         };
         upsert_task_from_sync(&conn, &task).unwrap();
         let tasks = load_tasks(&conn).unwrap();
@@ -959,7 +1269,17 @@ mod tests {
     #[test]
     fn test_upsert_task_lww_server_wins() {
         let conn = init_db_memory();
-        insert_task(&conn, "Local", "", Priority::Medium, Column::Todo, None).unwrap();
+        let board = test_board_uuid(&conn);
+        insert_task(
+            &conn,
+            "Local",
+            "",
+            Priority::Medium,
+            Column::Todo,
+            None,
+            &board,
+        )
+        .unwrap();
         let tasks = load_tasks(&conn).unwrap();
         let uuid = tasks[0].uuid.clone();
 
@@ -974,6 +1294,7 @@ mod tests {
             created_at: "2026-01-01T00:00:00".into(),
             updated_at: "2099-01-01T00:00:00".into(),
             deleted: false,
+            board_uuid: None,
         };
         upsert_task_from_sync(&conn, &remote).unwrap();
         let tasks = load_tasks(&conn).unwrap();
@@ -983,7 +1304,17 @@ mod tests {
     #[test]
     fn test_upsert_task_lww_local_wins() {
         let conn = init_db_memory();
-        insert_task(&conn, "Local", "", Priority::Medium, Column::Todo, None).unwrap();
+        let board = test_board_uuid(&conn);
+        insert_task(
+            &conn,
+            "Local",
+            "",
+            Priority::Medium,
+            Column::Todo,
+            None,
+            &board,
+        )
+        .unwrap();
         let tasks = load_tasks(&conn).unwrap();
         let uuid = tasks[0].uuid.clone();
 
@@ -998,6 +1329,7 @@ mod tests {
             created_at: "2020-01-01T00:00:00".into(),
             updated_at: "2020-01-01T00:00:00".into(),
             deleted: false,
+            board_uuid: None,
         };
         upsert_task_from_sync(&conn, &remote).unwrap();
         let tasks = load_tasks(&conn).unwrap();
@@ -1013,5 +1345,98 @@ mod tests {
         remap_tag_uuid(&conn, &old_uuid, "new-server-uuid").unwrap();
         let tags = load_tags(&conn).unwrap();
         assert_eq!(tags[0].uuid, "new-server-uuid");
+    }
+
+    #[test]
+    fn test_load_boards() {
+        let conn = setup();
+        let boards = load_boards(&conn).unwrap();
+        assert_eq!(boards.len(), 1);
+        assert_eq!(boards[0].name, "Personal");
+        assert_eq!(boards[0].position, 0);
+    }
+
+    #[test]
+    fn test_insert_board() {
+        let conn = setup();
+        let id = insert_board(&conn, "Work").unwrap();
+        assert!(id > 0);
+        let boards = load_boards(&conn).unwrap();
+        assert_eq!(boards.len(), 2);
+        assert_eq!(boards[1].name, "Work");
+        assert_eq!(boards[1].position, 1);
+    }
+
+    #[test]
+    fn test_update_board_name() {
+        let conn = setup();
+        let boards = load_boards(&conn).unwrap();
+        update_board_name(&conn, boards[0].id, "My Board").unwrap();
+        let boards = load_boards(&conn).unwrap();
+        assert_eq!(boards[0].name, "My Board");
+    }
+
+    #[test]
+    fn test_soft_delete_board() {
+        let conn = setup();
+        insert_board(&conn, "Temp").unwrap();
+        let boards = load_boards(&conn).unwrap();
+        assert_eq!(boards.len(), 2);
+        let temp = boards.iter().find(|b| b.name == "Temp").unwrap();
+        soft_delete_board(&conn, temp.id).unwrap();
+        let boards = load_boards(&conn).unwrap();
+        assert_eq!(boards.len(), 1);
+        assert_eq!(boards[0].name, "Personal");
+    }
+
+    #[test]
+    fn test_board_count() {
+        let conn = setup();
+        assert_eq!(board_count(&conn).unwrap(), 1);
+        insert_board(&conn, "Work").unwrap();
+        assert_eq!(board_count(&conn).unwrap(), 2);
+    }
+
+    #[test]
+    fn test_delete_board_cascades_tasks() {
+        let conn = setup();
+        let boards = load_boards(&conn).unwrap();
+        let board_uuid = &boards[0].uuid;
+        insert_task(
+            &conn,
+            "Task 1",
+            "",
+            Priority::Medium,
+            Column::Todo,
+            None,
+            board_uuid,
+        )
+        .unwrap();
+        assert_eq!(load_tasks(&conn).unwrap().len(), 1);
+        insert_board(&conn, "Other").unwrap();
+        soft_delete_board_cascade(&conn, boards[0].id).unwrap();
+        let tasks = load_tasks(&conn).unwrap();
+        assert_eq!(tasks.len(), 0);
+    }
+
+    #[test]
+    fn test_load_all_boards_includes_deleted() {
+        let conn = setup();
+        insert_board(&conn, "Temp").unwrap();
+        let boards = load_boards(&conn).unwrap();
+        let temp = boards.iter().find(|b| b.name == "Temp").unwrap();
+        soft_delete_board(&conn, temp.id).unwrap();
+        let active = load_boards(&conn).unwrap();
+        assert_eq!(active.len(), 1);
+        let all = load_all_boards(&conn).unwrap();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn test_default_board_uuid() {
+        let conn = setup();
+        let uuid = default_board_uuid(&conn).unwrap();
+        let boards = load_boards(&conn).unwrap();
+        assert_eq!(uuid, boards[0].uuid);
     }
 }

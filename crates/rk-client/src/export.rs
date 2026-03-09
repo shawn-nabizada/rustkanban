@@ -11,6 +11,8 @@ struct ExportData {
     version: u32,
     tasks: Vec<ExportTask>,
     tags: Vec<ExportTagEntry>,
+    #[serde(default)]
+    boards: Vec<ExportBoard>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -24,6 +26,15 @@ struct ExportTask {
     #[serde(skip_serializing_if = "Option::is_none")]
     due_date: Option<String>,
     tags: Vec<String>,
+    #[serde(default)]
+    board_uuid: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ExportBoard {
+    uuid: String,
+    name: String,
+    position: i32,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -59,6 +70,7 @@ impl ExportTagEntry {
 pub fn export_json(conn: &rusqlite::Connection) -> Result<String, Box<dyn std::error::Error>> {
     let tasks = db::load_tasks(conn)?;
     let tags = db::load_tags(conn)?;
+    let boards = db::load_boards(conn)?;
 
     let data = ExportData {
         version: 2,
@@ -72,6 +84,7 @@ pub fn export_json(conn: &rusqlite::Connection) -> Result<String, Box<dyn std::e
                 column: t.column.as_str().to_string(),
                 due_date: t.due_date.map(|d| d.format("%Y-%m-%d").to_string()),
                 tags: t.tags.clone(),
+                board_uuid: Some(t.board_id.clone()),
             })
             .collect(),
         tags: tags
@@ -81,6 +94,14 @@ pub fn export_json(conn: &rusqlite::Connection) -> Result<String, Box<dyn std::e
                     uuid: Some(t.uuid.clone()),
                     name: t.name.clone(),
                 })
+            })
+            .collect(),
+        boards: boards
+            .iter()
+            .map(|b| ExportBoard {
+                uuid: b.uuid.clone(),
+                name: b.name.clone(),
+                position: b.position,
             })
             .collect(),
     };
@@ -93,6 +114,21 @@ pub fn import_json(
     json: &str,
 ) -> Result<usize, Box<dyn std::error::Error>> {
     let data: ExportData = serde_json::from_str(json)?;
+
+    // Import boards (create missing ones)
+    {
+        let existing_boards = db::load_boards(conn)?;
+        for board in &data.boards {
+            if existing_boards.iter().any(|b| b.uuid == board.uuid) {
+                continue;
+            }
+            let mut name = board.name.clone();
+            if existing_boards.iter().any(|b| b.name == name) {
+                name = format!("{} (2)", name);
+            }
+            let _ = db::insert_board_with_uuid(conn, &board.uuid, &name, board.position);
+        }
+    }
 
     // Collect all referenced tag names (from the top-level tags list and from task tags)
     let mut all_tag_names: HashSet<String> =
@@ -142,8 +178,10 @@ pub fn import_json(
         }
     }
 
-    // Build tag name→ID map
+    // Build tag name->ID map
     let tag_map: HashMap<&str, i64> = tags_after.iter().map(|t| (t.name.as_str(), t.id)).collect();
+
+    let default_board = db::default_board_uuid(conn).unwrap_or_default();
 
     let mut count = 0;
     for task in &data.tasks {
@@ -162,6 +200,12 @@ pub fn import_json(
             .as_ref()
             .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
 
+        let board_id = task
+            .board_uuid
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&default_board);
+
         let task_id = if let Some(ref uuid) = task.uuid {
             db::insert_task_with_uuid(
                 conn,
@@ -171,6 +215,7 @@ pub fn import_json(
                 priority,
                 column,
                 due_date,
+                board_id,
             )?
         } else {
             db::insert_task(
@@ -180,6 +225,7 @@ pub fn import_json(
                 priority,
                 column,
                 due_date,
+                board_id,
             )?
         };
 
@@ -209,11 +255,14 @@ mod tests {
         let json = export_json(&conn).unwrap();
         assert!(json.contains("\"tasks\": []"));
         assert!(json.contains("\"version\": 2"));
+        // init_db_memory creates a default board, so boards should not be empty
+        assert!(json.contains("\"boards\""));
     }
 
     #[test]
     fn test_export_import_roundtrip() {
         let conn = crate::db::init_db_memory();
+        let board = crate::db::default_board_uuid(&conn).unwrap();
         crate::db::insert_tag(&conn, "bug").unwrap();
         let task_id = crate::db::insert_task(
             &conn,
@@ -222,6 +271,7 @@ mod tests {
             Priority::High,
             crate::model::Column::InProgress,
             None,
+            &board,
         )
         .unwrap();
         let tag_ids = crate::db::load_tags(&conn).unwrap();
@@ -230,6 +280,8 @@ mod tests {
         let json = export_json(&conn).unwrap();
         assert!(json.contains("\"version\": 2"));
         assert!(json.contains("\"uuid\""));
+        assert!(json.contains("\"board_uuid\""));
+        assert!(json.contains("\"boards\""));
 
         // Import into fresh DB
         let conn2 = crate::db::init_db_memory();
@@ -240,6 +292,10 @@ mod tests {
         assert_eq!(tasks[0].title, "Fix it");
         assert_eq!(tasks[0].priority, Priority::High);
         assert_eq!(tasks[0].tags, vec!["bug"]);
+
+        // Verify boards were imported
+        let boards = crate::db::load_boards(&conn2).unwrap();
+        assert!(!boards.is_empty());
     }
 
     #[test]
@@ -257,11 +313,14 @@ mod tests {
     #[test]
     fn test_export_v2_has_uuids() {
         let conn = crate::db::init_db_memory();
-        crate::db::insert_task(&conn, "T", "", Priority::Medium, Column::Todo, None).unwrap();
+        let board = crate::db::default_board_uuid(&conn).unwrap();
+        crate::db::insert_task(&conn, "T", "", Priority::Medium, Column::Todo, None, &board)
+            .unwrap();
         crate::db::insert_tag(&conn, "bug").unwrap();
         let json = export_json(&conn).unwrap();
         assert!(json.contains("\"version\": 2"));
         assert!(json.contains("\"uuid\""));
+        assert!(json.contains("\"board_uuid\""));
     }
 
     #[test]
@@ -277,8 +336,17 @@ mod tests {
     #[test]
     fn test_import_v2_skips_existing_uuid() {
         let conn = crate::db::init_db_memory();
-        crate::db::insert_task(&conn, "Original", "", Priority::Medium, Column::Todo, None)
-            .unwrap();
+        let board = crate::db::default_board_uuid(&conn).unwrap();
+        crate::db::insert_task(
+            &conn,
+            "Original",
+            "",
+            Priority::Medium,
+            Column::Todo,
+            None,
+            &board,
+        )
+        .unwrap();
         let tasks = crate::db::load_tasks(&conn).unwrap();
         let uuid = tasks[0].uuid.clone();
 

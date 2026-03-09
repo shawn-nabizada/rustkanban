@@ -77,11 +77,22 @@ async fn run_purge(pool: &PgPool) -> Result<(), sqlx::Error> {
             .await?
             .rows_affected();
 
-            if task_count > 0 || tag_count > 0 {
+            // Hard-delete boards (after tasks, since tasks reference boards)
+            let board_count = sqlx::query(
+                "DELETE FROM boards WHERE user_id = $1 AND deleted = TRUE AND deleted_at < $2",
+            )
+            .bind(user_id)
+            .bind(cutoff)
+            .execute(pool)
+            .await?
+            .rows_affected();
+
+            if task_count > 0 || tag_count > 0 || board_count > 0 {
                 tracing::info!(
-                    "Purged {} tasks and {} tags for user {}",
+                    "Purged {} tasks, {} tags, and {} boards for user {}",
                     task_count,
                     tag_count,
+                    board_count,
                     user_id
                 );
             }
