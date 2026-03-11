@@ -9,9 +9,7 @@ use uuid::Uuid;
 
 use crate::auth::AuthUser;
 use crate::error::AppError;
-
-// Timestamp format used for all to_char operations.
-const TS_FMT: &str = "YYYY-MM-DD\"T\"HH24:MI:SS";
+use crate::TS_FMT;
 
 // ───────────────────────────── Result type for tag dedup ─────────────────────
 

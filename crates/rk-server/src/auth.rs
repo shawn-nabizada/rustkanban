@@ -5,6 +5,8 @@ use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::error::AppError;
+
 /// Authenticated user extracted from Bearer token in the Authorization header.
 /// Use as an Axum extractor on protected routes.
 #[derive(Debug, Clone)]
@@ -79,6 +81,71 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthUser {
         }
 
         Err(StatusCode::UNAUTHORIZED)
+    }
+}
+
+/// Authenticated user from session cookie or Bearer token.
+/// Used by web CRUD endpoints (no device_id needed).
+#[derive(Debug, Clone)]
+pub struct WebUser {
+    pub user_id: Uuid,
+}
+
+impl<S: Send + Sync> FromRequestParts<S> for WebUser {
+    type Rejection = AppError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        // Try session cookie first
+        if let Ok(session) = tower_sessions::Session::from_request_parts(parts, state).await {
+            if let Ok(Some(id_str)) = session.get::<String>("user_id").await {
+                if let Ok(user_id) = Uuid::parse_str(&id_str) {
+                    return Ok(WebUser { user_id });
+                }
+            }
+        }
+
+        // Fall back to Bearer token
+        let pool = parts
+            .extensions
+            .get::<PgPool>()
+            .ok_or(AppError::Internal("Missing database pool".into()))?;
+
+        let token = parts
+            .headers
+            .get("Authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .ok_or(AppError::Unauthorized)?;
+
+        let hash = hash_token(token);
+
+        // Try device token
+        if let Some(record) = sqlx::query_as::<_, (Uuid,)>(
+            "SELECT user_id FROM auth_tokens \
+             WHERE token_hash = $1 AND (expires_at IS NULL OR expires_at > NOW())",
+        )
+        .bind(&hash)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("DB error: {e}")))?
+        {
+            return Ok(WebUser { user_id: record.0 });
+        }
+
+        // Try API token
+        if let Some(user_id) = sqlx::query_scalar::<_, Uuid>(
+            "SELECT user_id FROM api_tokens \
+             WHERE token_hash = $1 AND (expires_at IS NULL OR expires_at > NOW())",
+        )
+        .bind(&hash)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("DB error: {e}")))?
+        {
+            return Ok(WebUser { user_id });
+        }
+
+        Err(AppError::Unauthorized)
     }
 }
 

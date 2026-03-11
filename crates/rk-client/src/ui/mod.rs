@@ -67,7 +67,6 @@ pub fn render(frame: &mut Frame, app: &App) {
         AppMode::Options => options::render(frame, app),
         _ => {}
     }
-
 }
 
 fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {

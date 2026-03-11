@@ -77,8 +77,7 @@ Sync is opt-in. The app works fully offline without an account. If logged in, au
 - `sync.rs` — Sync client (pull/push/combined via ureq)
 - `update.rs` — Version check (GitHub API, 24h cooldown) and self-update logic
 - `ui/` — All rendering. `mod.rs` is entry point, delegates to submodules (board, modal, detail, sort_menu, tag_screen, search_bar, help_bar, delete_confirm, tab_bar, board_mgmt, options)
-- `crates/rk-server/static/` — Static assets (CSS) served by Axum
-- `crates/rk-server/templates/` — Askama HTML templates
+- `crates/rk-server/frontend/` — Svelte SPA (Vite build, served at `/` by Axum)
 
 ### Key Patterns
 - **State machine**: `AppMode` enum (Board, Selected, NewTask, EditTask, DetailView, SortMenu, DeleteConfirm, ClearDoneConfirm, TagManagement, SearchFilter, BoardManagement, BoardDeleteConfirm, Options) drives which handler + UI overlay is active

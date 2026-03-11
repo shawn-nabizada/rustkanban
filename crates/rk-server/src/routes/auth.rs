@@ -9,10 +9,15 @@ use sqlx::PgPool;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use super::pages::{ErrorTemplate, HtmlTemplate, LoginTokenTemplate};
 use crate::auth::{generate_token, hash_token};
 use crate::config::Config;
 use crate::session::SESSION_KEY_USER_ID;
+use axum::Json;
+
+/// Return a JSON error response for auth failures.
+fn auth_error(status: axum::http::StatusCode, message: &str) -> Response {
+    (status, Json(serde_json::json!({"error": message}))).into_response()
+}
 
 /// Shared application state passed to all route handlers.
 #[derive(Clone)]
@@ -29,6 +34,7 @@ pub struct PendingLogin {
     pub device_name: String,
     #[allow(dead_code)]
     pub headless: bool,
+    pub redirect_url: Option<String>,
     pub created_at: tokio::time::Instant,
 }
 
@@ -38,6 +44,7 @@ pub struct LoginQuery {
     pub redirect_port: Option<u16>,
     pub device_name: Option<String>,
     pub mode: Option<String>,
+    pub redirect_url: Option<String>,
 }
 
 /// Query parameters received from GitHub on the `/auth/callback` endpoint.
@@ -88,6 +95,7 @@ pub async fn login(State(state): State<AppState>, Query(params): Query<LoginQuer
         redirect_port: params.redirect_port,
         device_name: params.device_name.unwrap_or_else(|| "unknown".to_string()),
         headless: params.mode.as_deref() == Some("headless"),
+        redirect_url: params.redirect_url,
         created_at: tokio::time::Instant::now(),
     };
 
@@ -117,15 +125,10 @@ pub async fn callback(
         match logins.remove(&params.state) {
             Some(p) => p,
             None => {
-                return (
+                return auth_error(
                     axum::http::StatusCode::BAD_REQUEST,
-                    HtmlTemplate(ErrorTemplate {
-                        title: "Authentication Failed".into(),
-                        message: "Invalid or expired login session. Please try again.".into(),
-                        logged_in: false,
-                    }),
-                )
-                    .into_response();
+                    "Invalid or expired login session. Please try again.",
+                );
             }
         }
     };
@@ -136,15 +139,10 @@ pub async fn callback(
             Ok(token) => token,
             Err(e) => {
                 tracing::error!("GitHub token exchange failed: {e}");
-                return (
+                return auth_error(
                     axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                    HtmlTemplate(ErrorTemplate {
-                        title: "Authentication Failed".into(),
-                        message: "Failed to communicate with GitHub. Please try again.".into(),
-                        logged_in: false,
-                    }),
-                )
-                    .into_response();
+                    "Failed to communicate with GitHub. Please try again.",
+                );
             }
         };
 
@@ -153,15 +151,10 @@ pub async fn callback(
         Ok(user) => user,
         Err(e) => {
             tracing::error!("GitHub user fetch failed: {e}");
-            return (
+            return auth_error(
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                HtmlTemplate(ErrorTemplate {
-                    title: "Authentication Failed".into(),
-                    message: "Failed to retrieve your GitHub profile. Please try again.".into(),
-                    logged_in: false,
-                }),
-            )
-                .into_response();
+                "Failed to retrieve your GitHub profile. Please try again.",
+            );
         }
     };
 
@@ -170,15 +163,10 @@ pub async fn callback(
         Ok(id) => id,
         Err(e) => {
             tracing::error!("User upsert failed: {e}");
-            return (
+            return auth_error(
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                HtmlTemplate(ErrorTemplate {
-                    title: "Authentication Failed".into(),
-                    message: "Failed to set up your account. Please try again.".into(),
-                    logged_in: false,
-                }),
-            )
-                .into_response();
+                "Failed to set up your account. Please try again.",
+            );
         }
     };
 
@@ -193,7 +181,33 @@ pub async fn callback(
     // Browser login: only needs session cookie, no device/token
     let is_browser_login = pending.redirect_port.is_none() && !pending.headless;
     if is_browser_login {
-        return Redirect::temporary("/account").into_response();
+        // Auto-create "Personal" board for new users (no boards yet)
+        let board_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM boards WHERE user_id = $1 AND deleted = FALSE",
+        )
+        .bind(user_id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(0);
+
+        if board_count == 0 {
+            let _ = sqlx::query(
+                "INSERT INTO boards (uuid, user_id, name, position) VALUES ($1, $2, 'Personal', 0)",
+            )
+            .bind(Uuid::new_v4())
+            .bind(user_id)
+            .execute(&state.pool)
+            .await;
+        }
+
+        let redirect = pending.redirect_url.as_deref().unwrap_or("/");
+        // Validate redirect is a safe relative path (prevent open redirect)
+        let redirect = if redirect.starts_with('/') && !redirect.starts_with("//") {
+            redirect
+        } else {
+            "/"
+        };
+        return Redirect::temporary(redirect).into_response();
     }
 
     // CLI login: create device + bearer token
@@ -206,15 +220,10 @@ pub async fn callback(
         .await
     {
         tracing::error!("Device creation failed: {e}");
-        return (
+        return auth_error(
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            HtmlTemplate(ErrorTemplate {
-                title: "Authentication Failed".into(),
-                message: "Failed to set up your device. Please try again.".into(),
-                logged_in: false,
-            }),
-        )
-            .into_response();
+            "Failed to set up your device. Please try again.",
+        );
     }
 
     let raw_token = generate_token();
@@ -231,15 +240,10 @@ pub async fn callback(
     .await
     {
         tracing::error!("Token creation failed: {e}");
-        return (
+        return auth_error(
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            HtmlTemplate(ErrorTemplate {
-                title: "Authentication Failed".into(),
-                message: "Failed to create authentication token. Please try again.".into(),
-                logged_in: false,
-            }),
-        )
-            .into_response();
+            "Failed to create authentication token. Please try again.",
+        );
     }
 
     if let Some(port) = pending.redirect_port {
@@ -249,13 +253,9 @@ pub async fn callback(
         );
         Redirect::temporary(&redirect_url).into_response()
     } else {
-        // Headless CLI mode: render token in the browser for manual copy
-        HtmlTemplate(LoginTokenTemplate {
-            token: raw_token,
-            device_id: device_id.to_string(),
-            logged_in: true,
-        })
-        .into_response()
+        // Headless CLI mode: redirect to SPA login token page
+        let redirect_url = format!("/#/login-token?token={}&device_id={device_id}", raw_token);
+        Redirect::temporary(&redirect_url).into_response()
     }
 }
 

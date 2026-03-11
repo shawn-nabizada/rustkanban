@@ -1,4 +1,6 @@
 /target
 .claude
 .env
+.superpowers/
 docs/plans/
+docs/superpowers/

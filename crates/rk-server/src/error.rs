@@ -9,6 +9,7 @@ pub enum AppError {
     Validation(String),
     Unauthorized,
     Forbidden,
+    NotFound(String),
 }
 
 impl IntoResponse for AppError {
@@ -24,6 +25,7 @@ impl IntoResponse for AppError {
                 "Authentication required".into(),
             ),
             AppError::Forbidden => (StatusCode::FORBIDDEN, "forbidden", "Access denied".into()),
+            AppError::NotFound(msg) => (StatusCode::NOT_FOUND, "not_found", msg),
         };
 
         let body = serde_json::json!({

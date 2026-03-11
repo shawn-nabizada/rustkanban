@@ -496,7 +496,12 @@ impl Default for KeyMap {
         km.bind(b, KeyCode::Enter, KeyModifiers::NONE, Action::ViewDetail);
 
         // ClearDone: Ctrl+d
-        km.bind(b, KeyCode::Char('d'), KeyModifiers::CONTROL, Action::ClearDone);
+        km.bind(
+            b,
+            KeyCode::Char('d'),
+            KeyModifiers::CONTROL,
+            Action::ClearDone,
+        );
 
         // DuplicateTask: c
         km.bind(

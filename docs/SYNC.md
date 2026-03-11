@@ -147,7 +147,7 @@ Every computer or terminal session you log in from becomes a **device**. Devices
 
 ### Viewing your devices
 
-Visit your account page at `https://sync.rustkanban.com/account` (or your custom server URL) after logging in through the browser. You'll see a table of all your devices with:
+Visit your account page at `https://sync.rustkanban.com/#/account` (or your custom server URL) after logging in through the browser. You'll see a table of all your devices with:
 
 - **Name** — the device name (editable)
 - **Last Synced** — when the device last connected
@@ -239,7 +239,7 @@ Your tasks and tags are stored in a PostgreSQL database on the server. If you de
 
 ## Account Management
 
-The account page at `https://sync.rustkanban.com/account` (sign in with GitHub) lets you:
+The account page at `https://sync.rustkanban.com/#/account` (sign in with GitHub) lets you:
 
 - **View your profile** — your GitHub username.
 - **Manage devices** — rename, view sync status, revoke access.

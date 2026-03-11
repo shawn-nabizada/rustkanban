@@ -21,9 +21,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - Added text validation limits (500 char titles, 5000 char descriptions, 50 char tag names)
 - Added update notifications in TUI status bar (checks GitHub releases daily)
 - Added `rk update` command for self-updating to the latest version
+- Web app: Svelte SPA served at root (`/`), replacing server-rendered Askama templates
+- Web app: account management, board sharing, tag management via SPA
+- Web app: CLI headless login token display via SPA route
 
 ### Changed
 - Switched to soft deletes internally (no user-facing change)
+
+### Removed
+- Server-rendered Askama HTML templates (replaced by Svelte SPA)
+- Old form-based account management routes (`/account/devices/*`, `/account/tokens/*`)
+- `/static/style.css` (styles now in Svelte components)
 
 ### Previous (pre-sync)
 - Duplicate task (C key) with proper undo support

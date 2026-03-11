@@ -16,10 +16,7 @@ fn build_edit_line(app: &App) -> Line<'static> {
             .nth(1)
             .map(|(i, _)| cursor + i)
             .unwrap_or(name.len());
-        (
-            name[cursor..ch_end].to_string(),
-            name[ch_end..].to_string(),
-        )
+        (name[cursor..ch_end].to_string(), name[ch_end..].to_string())
     } else {
         (" ".to_string(), String::new())
     };
