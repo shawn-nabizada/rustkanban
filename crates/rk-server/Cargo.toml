@@ -30,5 +30,5 @@ reqwest = { version = "0.12", features = ["json"] }
 rand = "0.8"
 hex = "0.4"
 askama = "0.15"
-tower-sessions = { version = "0.14", features = ["signed"] }
+tower-sessions = { version = "0.15", features = ["signed"] }
 tower-sessions-sqlx-store = { version = "0.15", features = ["postgres"] }
