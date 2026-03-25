@@ -11,6 +11,7 @@ pub enum SyncError {
     AuthExpired,
     AccountNotFound,
     ServerError(String),
+    LimitExceeded(String),
     Other(String),
 }
 
@@ -35,6 +36,7 @@ impl std::fmt::Display for SyncError {
                 )
             }
             SyncError::ServerError(e) => write!(f, "Server error — try again later ({})", e),
+            SyncError::LimitExceeded(msg) => write!(f, "Sync blocked: {}", msg),
             SyncError::Other(e) => write!(f, "Sync error: {}", e),
         }
     }
@@ -189,6 +191,10 @@ fn post_sync(
         }
         Err(ureq::Error::StatusCode(401)) => Err(SyncError::AuthExpired),
         Err(ureq::Error::StatusCode(403)) => Err(SyncError::AccountNotFound),
+        Err(ureq::Error::StatusCode(429)) => Err(SyncError::LimitExceeded(
+            "Server limit reached — you may have too many tasks (200), tags (15), or devices (5)"
+                .into(),
+        )),
         Err(ureq::Error::StatusCode(code)) if code >= 500 => {
             Err(SyncError::ServerError(format!("HTTP {}", code)))
         }

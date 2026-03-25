@@ -2,7 +2,16 @@
 # Build context must be the workspace root (so rk-shared is accessible).
 # Example: docker build -f crates/rk-server/Dockerfile .
 
-# -- Stage 1: Build ----------------------------------------------------------
+# -- Stage 1: Build frontend -------------------------------------------------
+FROM node:22-slim AS frontend
+
+WORKDIR /frontend
+COPY crates/rk-server/frontend/package.json crates/rk-server/frontend/package-lock.json* ./
+RUN npm ci
+COPY crates/rk-server/frontend/ ./
+RUN npm run build
+
+# -- Stage 2: Build Rust -----------------------------------------------------
 FROM rust:1-slim AS builder
 
 RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
@@ -32,7 +41,7 @@ RUN touch crates/rk-shared/src/lib.rs crates/rk-server/src/main.rs
 
 RUN cargo build --release --package rk-server
 
-# -- Stage 2: Runtime --------------------------------------------------------
+# -- Stage 3: Runtime --------------------------------------------------------
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y ca-certificates libssl3 && rm -rf /var/lib/apt/lists/*
@@ -45,6 +54,9 @@ COPY --from=builder /build/target/release/rk-server /app/rk-server
 # Copy migrations -- the server loads them from ./migrations at startup.
 COPY crates/rk-server/migrations /app/migrations
 COPY crates/rk-server/static /app/static
+
+# Copy built frontend from the Node stage.
+COPY --from=frontend /frontend/dist /app/frontend/dist
 
 EXPOSE 3000
 

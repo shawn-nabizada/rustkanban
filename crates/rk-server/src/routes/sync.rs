@@ -330,15 +330,27 @@ async fn should_full_pull_conn(
 async fn validate_limits(
     pool: &PgPool,
     user_id: Uuid,
-    _payload: &SyncPayload,
+    payload: &SyncPayload,
 ) -> Result<(), AppError> {
+    // Count new (non-deleted) items in payload that don't already exist in the DB.
+    // This prevents a user at 199 tasks from pushing 100 new tasks to reach 299.
+    let new_tasks = payload.tasks.iter().filter(|t| !t.deleted).count() as i64;
+    let new_tags = payload.tags.iter().filter(|t| !t.deleted).count() as i64;
+    let new_boards = payload.boards.iter().filter(|b| !b.deleted).count() as i64;
+
     let task_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM tasks WHERE user_id = $1 AND deleted = FALSE")
             .bind(user_id)
             .fetch_one(pool)
             .await?;
-    if task_count > 200 {
-        return Err(AppError::Validation("Task limit exceeded (max 200)".into()));
+    // Projected count is an upper bound — some payload items may be updates, not inserts.
+    // Over-counting is safe (rejects slightly early rather than allowing overflows).
+    if task_count + new_tasks > 200 {
+        return Err(AppError::LimitExceeded {
+            resource: "task",
+            current: task_count,
+            max: 200,
+        });
     }
 
     let tag_count: i64 =
@@ -346,8 +358,12 @@ async fn validate_limits(
             .bind(user_id)
             .fetch_one(pool)
             .await?;
-    if tag_count > 15 {
-        return Err(AppError::Validation("Tag limit exceeded (max 15)".into()));
+    if tag_count + new_tags > 15 {
+        return Err(AppError::LimitExceeded {
+            resource: "tag",
+            current: tag_count,
+            max: 15,
+        });
     }
 
     let board_count: i64 =
@@ -355,8 +371,12 @@ async fn validate_limits(
             .bind(user_id)
             .fetch_one(pool)
             .await?;
-    if board_count > 5 {
-        return Err(AppError::Validation("Maximum of 5 boards per user".into()));
+    if board_count + new_boards > 5 {
+        return Err(AppError::LimitExceeded {
+            resource: "board",
+            current: board_count,
+            max: 5,
+        });
     }
 
     let device_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE user_id = $1")
@@ -364,7 +384,11 @@ async fn validate_limits(
         .fetch_one(pool)
         .await?;
     if device_count > 5 {
-        return Err(AppError::Validation("Device limit exceeded (max 5)".into()));
+        return Err(AppError::LimitExceeded {
+            resource: "device",
+            current: device_count,
+            max: 5,
+        });
     }
 
     Ok(())

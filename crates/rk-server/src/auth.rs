@@ -127,8 +127,10 @@ impl<S: Send + Sync> FromRequestParts<S> for WebUser {
         .bind(&hash)
         .fetch_optional(pool)
         .await
-        .map_err(|e| AppError::Internal(format!("DB error: {e}")))?
-        {
+        .map_err(|e| {
+            tracing::error!("Auth DB error: {e}");
+            AppError::Internal("Internal server error".into())
+        })? {
             return Ok(WebUser { user_id: record.0 });
         }
 
@@ -140,8 +142,10 @@ impl<S: Send + Sync> FromRequestParts<S> for WebUser {
         .bind(&hash)
         .fetch_optional(pool)
         .await
-        .map_err(|e| AppError::Internal(format!("DB error: {e}")))?
-        {
+        .map_err(|e| {
+            tracing::error!("Auth DB error: {e}");
+            AppError::Internal("Internal server error".into())
+        })? {
             return Ok(WebUser { user_id });
         }
 

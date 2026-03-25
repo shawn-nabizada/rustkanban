@@ -1,7 +1,9 @@
 pub mod auth;
 pub mod config;
+pub mod csrf;
 pub mod error;
 pub mod purge;
+pub mod rate_limit;
 pub mod routes;
 pub mod session;
 

@@ -11,7 +11,10 @@ class ApiError extends Error {
 async function request(method, path, body = null) {
   const opts = {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Requested-With': 'XMLHttpRequest',
+    },
     credentials: 'same-origin',
   };
   if (body) opts.body = JSON.stringify(body);

@@ -83,9 +83,11 @@ pub async fn create_share(
             .fetch_one(&pool)
             .await?;
     if share_count >= 10 {
-        return Err(AppError::Validation(
-            "Share limit reached (max 10 per board)".into(),
-        ));
+        return Err(AppError::LimitExceeded {
+            resource: "share",
+            current: share_count,
+            max: 10,
+        });
     }
 
     let token = generate_share_token();

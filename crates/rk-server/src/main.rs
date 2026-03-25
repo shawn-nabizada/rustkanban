@@ -1,9 +1,13 @@
-use rk_server::{config, purge, routes};
+use rk_server::{config, csrf, purge, rate_limit, routes};
 
-use axum::{response::IntoResponse, routing::get, routing::post, Extension, Router};
+use axum::{
+    middleware, response::IntoResponse, routing::get, routing::post, Extension, Json, Router,
+};
 use sha2::{Digest, Sha512};
 use sqlx::migrate::Migrator;
+use sqlx::PgPool;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -14,6 +18,7 @@ use tower_sessions_sqlx_store::PostgresStore;
 use tracing_subscriber::EnvFilter;
 
 use config::Config;
+use rate_limit::{RateLimitConfig, RateLimitLayer};
 
 #[tokio::main]
 async fn main() {
@@ -21,6 +26,7 @@ async fn main() {
 
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
+        .json()
         .init();
 
     let config = Config::from_env();
@@ -70,12 +76,33 @@ async fn main() {
         http_client: reqwest::Client::new(),
     };
 
-    let app = Router::new()
-        .route("/health", get(|| async { "OK" }))
+    let strict_limiter = RateLimitLayer::new(RateLimitConfig::strict());
+    let standard_limiter = RateLimitLayer::new(RateLimitConfig::standard());
+
+    // Routes with strict rate limiting (auth endpoints + unauthenticated shared board endpoints)
+    let strict_routes = Router::new()
         .route("/login", get(routes::auth::login))
+        .route("/auth/callback", get(routes::auth::callback))
+        .route(
+            "/api/v1/shared/{token}",
+            get(routes::shares::get_shared_board),
+        )
+        .route(
+            "/api/v1/shared/{token}/tasks",
+            post(routes::shares::create_shared_task),
+        )
+        .route(
+            "/api/v1/shared/{token}/tasks/{uuid}",
+            axum::routing::patch(routes::shares::update_shared_task)
+                .delete(routes::shares::delete_shared_task),
+        )
+        .with_state(state.clone())
+        .layer(strict_limiter);
+
+    let app = Router::new()
+        .route("/health", get(health_check))
         .route("/login/success", get(routes::pages::login_success))
         .route("/account", get(routes::pages::account))
-        .route("/auth/callback", get(routes::auth::callback))
         .route("/auth/logout", get(routes::pages::logout))
         .route("/api/v1/sync/pull", post(routes::sync::pull))
         .route("/api/v1/sync/push", post(routes::sync::push))
@@ -121,7 +148,7 @@ async fn main() {
             axum::routing::delete(routes::web_account::delete_account),
         )
         .route("/api/v1/auth/logout", post(routes::web_account::logout))
-        // Sharing API
+        // Sharing API (authenticated share management)
         .route(
             "/api/v1/boards/{uuid}/shares",
             post(routes::shares::create_share).get(routes::shares::list_shares),
@@ -130,30 +157,26 @@ async fn main() {
             "/api/v1/shares/{id}",
             axum::routing::delete(routes::shares::delete_share),
         )
-        .route(
-            "/api/v1/shared/{token}",
-            get(routes::shares::get_shared_board),
-        )
-        .route(
-            "/api/v1/shared/{token}/tasks",
-            post(routes::shares::create_shared_task),
-        )
-        .route(
-            "/api/v1/shared/{token}/tasks/{uuid}",
-            axum::routing::patch(routes::shares::update_shared_task)
-                .delete(routes::shares::delete_shared_task),
-        )
         // Backward compat redirect
         .route(
             "/app",
             get(|| async { axum::response::Redirect::permanent("/").into_response() }),
         )
-        // SPA: serve frontend at root, with index.html fallback for client-side routing
-        .fallback_service(
-            ServeDir::new("crates/rk-server/frontend/dist")
-                .not_found_service(ServeFile::new("crates/rk-server/frontend/dist/index.html")),
-        )
+        // SPA: serve frontend at root, with index.html fallback for client-side routing.
+        // Try ./frontend/dist first (Docker), then crate-relative path (cargo run from workspace root).
+        .fallback_service({
+            let dist_dir = if Path::new("./frontend/dist").is_dir() {
+                "./frontend/dist"
+            } else {
+                "crates/rk-server/frontend/dist"
+            };
+            ServeDir::new(dist_dir)
+                .not_found_service(ServeFile::new(format!("{}/index.html", dist_dir)))
+        })
         .with_state(state)
+        .merge(strict_routes)
+        .layer(middleware::from_fn(csrf::csrf_protection))
+        .layer(standard_limiter)
         .layer(RequestBodyLimitLayer::new(10 * 1024 * 1024)) // 10 MB
         .layer(Extension(pool.clone()))
         .layer(session_layer);
@@ -161,7 +184,55 @@ async fn main() {
     purge::spawn_purge_job(pool);
 
     let addr = format!("0.0.0.0:{}", config.port);
-    tracing::info!("Starting server on {}", addr);
+    tracing::info!(addr = %addr, "Starting server");
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .unwrap();
+
+    tracing::info!("Server shut down gracefully");
+}
+
+/// Health check that verifies database connectivity.
+async fn health_check(Extension(pool): Extension<PgPool>) -> impl IntoResponse {
+    match sqlx::query_scalar::<_, i32>("SELECT 1")
+        .fetch_one(&pool)
+        .await
+    {
+        Ok(_) => Json(serde_json::json!({"status": "ok", "database": "connected"})).into_response(),
+        Err(_) => (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"status": "degraded", "database": "disconnected"})),
+        )
+            .into_response(),
+    }
+}
+
+/// Wait for SIGINT (Ctrl+C) or SIGTERM for graceful shutdown.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("Failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("Failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => tracing::info!("Received SIGINT, shutting down"),
+        _ = terminate => tracing::info!("Received SIGTERM, shutting down"),
+    }
 }

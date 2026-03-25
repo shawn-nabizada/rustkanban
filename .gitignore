@@ -4,3 +4,5 @@
 .superpowers/
 docs/plans/
 docs/superpowers/
+crates/rk-server/frontend/dist/
+crates/rk-server/frontend/node_modules/

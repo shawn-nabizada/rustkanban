@@ -3,13 +3,15 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 /// Create a test user directly in the database. Returns user_id.
+/// Each call generates a unique username to avoid collisions in multi-user tests.
 pub async fn create_test_user(pool: &PgPool) -> Uuid {
     let user_id = Uuid::new_v4();
+    let username = format!("testuser_{}", &user_id.to_string()[..8]);
     sqlx::query("INSERT INTO users (id, github_id, username, email) VALUES ($1, $2, $3, $4)")
         .bind(user_id)
         .bind(rand::random::<i64>().abs())
-        .bind("testuser")
-        .bind(Some("test@example.com"))
+        .bind(&username)
+        .bind(Some(format!("{}@example.com", username)))
         .execute(pool)
         .await
         .expect("Failed to create test user");

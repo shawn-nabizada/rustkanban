@@ -281,9 +281,18 @@ pub async fn export_data(
         .fetch_all(&pool),
     );
 
-    let tasks = task_result.map_err(|e| AppError::Internal(format!("Export failed: {e}")))?;
-    let tag_rows = tag_result.map_err(|e| AppError::Internal(format!("Export failed: {e}")))?;
-    let board_rows = board_result.map_err(|e| AppError::Internal(format!("Export failed: {e}")))?;
+    let tasks = task_result.map_err(|e| {
+        tracing::error!("Export failed: {e}");
+        AppError::Internal("Export failed".into())
+    })?;
+    let tag_rows = tag_result.map_err(|e| {
+        tracing::error!("Export failed: {e}");
+        AppError::Internal("Export failed".into())
+    })?;
+    let board_rows = board_result.map_err(|e| {
+        tracing::error!("Export failed: {e}");
+        AppError::Internal("Export failed".into())
+    })?;
 
     let export = serde_json::json!({
         "version": 2,
